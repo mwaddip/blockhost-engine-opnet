@@ -1,0 +1,464 @@
+{
+    "functions": [
+        {
+            "name": "setPaymentToken",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "token",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "createPlan",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "name",
+                    "type": "STRING"
+                },
+                {
+                    "name": "pricePerDay",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "updatePlan",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "name",
+                    "type": "STRING"
+                },
+                {
+                    "name": "pricePerDay",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "active",
+                    "type": "BOOL"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "cancelSubscription",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "withdraw",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "to",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "setAcceptingSubscriptions",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "accepting",
+                    "type": "BOOL"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "setGracePeriod",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "days",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "buySubscription",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "days",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "userEncrypted",
+                    "type": "BYTES"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "extendSubscription",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "days",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "isAcceptingSubscriptions",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "accepting",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "getPaymentToken",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "token",
+                    "type": "ADDRESS"
+                }
+            ]
+        },
+        {
+            "name": "getGracePeriod",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "days",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getPlan",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "name",
+                    "type": "STRING"
+                },
+                {
+                    "name": "pricePerDay",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "active",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "getSubscription",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "subscriber",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "expiresAt",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "isActive",
+                    "type": "BOOL"
+                },
+                {
+                    "name": "cancelled",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "isSubscriptionActive",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "active",
+                    "type": "BOOL"
+                }
+            ]
+        },
+        {
+            "name": "daysRemaining",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "days",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getSubscriptionsBySubscriber",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriber",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "subscriptionIds",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getTotalSubscriptionCount",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "count",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getTotalPlanCount",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [],
+            "outputs": [
+                {
+                    "name": "count",
+                    "type": "UINT256"
+                }
+            ]
+        }
+    ],
+    "events": [
+        {
+            "name": "PlanCreated",
+            "values": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "name",
+                    "type": "STRING"
+                },
+                {
+                    "name": "pricePerDay",
+                    "type": "UINT256"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "PlanUpdated",
+            "values": [
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "name",
+                    "type": "STRING"
+                },
+                {
+                    "name": "pricePerDay",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "active",
+                    "type": "BOOL"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "SubscriptionCancelled",
+            "values": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "subscriber",
+                    "type": "ADDRESS"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "AcceptingSubscriptionsChanged",
+            "values": [
+                {
+                    "name": "accepting",
+                    "type": "BOOL"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "SubscriptionCreated",
+            "values": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "subscriber",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "expiresAt",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "paidAmount",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "userEncrypted",
+                    "type": "BYTES"
+                }
+            ],
+            "type": "Event"
+        },
+        {
+            "name": "SubscriptionExtended",
+            "values": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "planId",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "extendedBy",
+                    "type": "ADDRESS"
+                },
+                {
+                    "name": "newExpiresAt",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "paidAmount",
+                    "type": "UINT256"
+                }
+            ],
+            "type": "Event"
+        }
+    ]
+}

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OPNet Auth</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.c{max-width:480px;width:100%;background:#1a1a1a;border-radius:12px;padding:24px;box-shadow:0 4px 24px rgba(0,0,0,.5)}
+h1{font-size:1.25rem;margin-bottom:16px;color:#fff}
+label{display:block;margin-bottom:6px;font-size:.875rem;color:#888}
+input{width:100%;padding:12px;border:1px solid #333;border-radius:8px;background:#0a0a0a;color:#fff;font-size:1rem;margin-bottom:16px;font-family:inherit}
+input:focus{outline:none;border-color:#f7931a}
+button{width:100%;padding:12px;border:none;border-radius:8px;font-size:1rem;cursor:pointer;transition:background .2s}
+.btn-primary{background:#f7931a;color:#fff}
+.btn-primary:hover{background:#e8850f}
+.btn-primary:disabled{background:#5a3600;cursor:not-allowed}
+.status{text-align:center;padding:8px;margin-bottom:16px;border-radius:6px;font-size:.875rem}
+.status.error{background:#7f1d1d;color:#fca5a5}
+.status.success{background:#14532d;color:#86efac}
+.hidden{display:none}
+.wallet{font-size:.75rem;color:#666;margin-bottom:16px;word-break:break-all}
+.info{font-size:.75rem;color:#888;margin-bottom:16px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="c">
+<h1>OPNet Authentication</h1>
+<div id="status" class="status hidden"></div>
+
+<div id="connect-section">
+<p class="info">Sign in to your server using your OPWallet. Connect your wallet to get started.</p>
+<button id="connect" class="btn-primary">Connect OPWallet</button>
+</div>
+
+<div id="main-section" class="hidden">
+<div id="wallet" class="wallet"></div>
+
+<div id="sign-form">
+<label for="code">OTP Code</label>
+<input type="text" id="code" readonly autocomplete="off">
+<label for="machine">Machine ID</label>
+<input type="text" id="machine" readonly autocomplete="off">
+<button id="sign" class="btn-primary">Sign Message</button>
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+var $=function(id){return document.getElementById(id)};
+var show=function(id,v){$(id).classList.toggle('hidden',v===false)};
+var status=function(msg,type){var s=$('status');s.textContent=msg;s.className='status '+(type||'success');show('status')};
+
+var sessionId=(new URLSearchParams(window.location.search)).get('session');
+
+if(!sessionId){
+    status('No session. Use the link from your terminal.','error');
+    $('connect').disabled=true;
+}
+
+function uint8ToBase64(bytes){
+    var binary='';
+    for(var i=0;i<bytes.length;i++) binary+=String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function getWallet(){
+    if(!window.unisat) return null;
+    var w=window.unisat;
+    if(typeof w.requestAccounts==='function') return w;
+    return null;
+}
+
+function connect(){
+    var wallet=getWallet();
+    if(!wallet){status('No OPWallet found. Install the OPWallet extension.','error');return}
+    wallet.requestAccounts().then(function(accs){
+        if(!accs||!accs.length){status('No accounts returned','error');return}
+        $('wallet').textContent='Connected: '+accs[0];
+        show('connect-section',false);
+        show('main-section');
+        show('status',false);
+        loadSession();
+    }).catch(function(){status('Connection rejected','error')});
+}
+
+function loadSession(){
+    fetch('/auth/pending/'+sessionId).then(function(res){
+        if(!res.ok){status('Session not found or expired','error');return}
+        return res.json();
+    }).then(function(data){
+        if(!data) return;
+        if(data.otp) $('code').value=data.otp;
+        if(data.machine_id) $('machine').value=data.machine_id;
+    }).catch(function(){status('Failed to load session','error')});
+}
+
+function sign(){
+    var wallet=getWallet();
+    if(!wallet){status('Wallet disconnected','error');return}
+    var code=$('code').value.trim();
+    var machine=$('machine').value.trim();
+    if(!code||!machine){status('Session data incomplete','error');return}
+
+    var msg='Authenticate to '+machine+' with code: '+code;
+
+    $('sign').disabled=true;
+    $('sign').textContent='Signing...';
+
+    wallet.signMLDSAMessage(msg).then(function(signed){
+        var payload=JSON.stringify({
+            signature:uint8ToBase64(signed.signature),
+            publicKey:uint8ToBase64(signed.publicKey)
+        });
+
+        return fetch('/auth/callback/'+sessionId,{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:payload
+        });
+    }).then(function(cb){
+        if(cb.ok){
+            show('sign-form',false);
+            status('Signature sent! Press Enter in your terminal.','success');
+        }else{
+            status('Server rejected the signature ('+cb.status+')','error');
+        }
+    }).catch(function(e){
+        status('Signing failed: '+(e.message||e),'error');
+    }).finally(function(){
+        $('sign').disabled=false;
+        $('sign').textContent='Sign Message';
+    });
+}
+
+$('connect').onclick=connect;
+$('sign').onclick=sign;
+})();
+</script>
+</body>
+</html>

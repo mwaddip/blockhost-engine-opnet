@@ -1,0 +1,25 @@
+[Unit]
+Description=Blockhost Subscriptions Event Monitor
+After=network.target
+Requires=blockhost-root-agent.service
+After=blockhost-root-agent.service
+
+[Service]
+Type=simple
+User=blockhost
+Group=blockhost
+Environment=HOME=/var/lib/blockhost
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+EnvironmentFile=/opt/blockhost/.env
+ExecStart=/usr/bin/node /usr/share/blockhost/monitor.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/var/lib/blockhost
+
+[Install]
+WantedBy=multi-user.target

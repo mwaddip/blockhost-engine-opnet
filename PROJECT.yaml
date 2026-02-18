@@ -1,0 +1,216 @@
+# PROJECT.yaml - Machine-readable project specification for Claude Code
+# This file enables other Claude sessions to import this project as a submodule
+# and understand how to interact with it without reading the entire codebase.
+
+name: blockhost-engine
+version: "1.0.0"
+description: |
+  Blockchain-based VM hosting subscription system. Users purchase subscriptions
+  on-chain, which triggers automatic VM provisioning with NFT-based SSH authentication.
+
+# Project components
+components:
+  smart_contract:
+    name: BlockhostSubscriptions
+    language: solidity
+    path: contracts/BlockhostSubscriptions.sol
+    description: |
+      EVM contract handling subscription purchases, extensions, and cancellations.
+      Emits events that the monitor service watches to trigger VM provisioning.
+
+    key_events:
+      - name: SubscriptionCreated
+        fields: [subscriptionId, planId, subscriber, expiresAt, paidAmount, paymentToken, userEncrypted]
+        triggers: VM provisioning via blockhost-provisioner-proxmox
+      - name: SubscriptionExtended
+        fields: [subscriptionId, planId, extendedBy, newExpiresAt, paidAmount, paymentToken]
+        triggers: Update VM expiry in database
+      - name: SubscriptionCancelled
+        fields: [subscriptionId, planId, subscriber]
+        triggers: VM destruction
+
+  monitor:
+    language: typescript
+    entry_point: src/monitor/index.ts
+    description: |
+      Polls blockchain for contract events and dispatches to handlers.
+      Handlers call blockhost-provisioner-proxmox scripts to provision/manage VMs.
+      Also processes admin commands and runs periodic NFT reconciliation.
+
+    handlers:
+      - event: SubscriptionCreated
+        action: Calls vm-generator.py to create VM and mint NFT
+      - event: SubscriptionExtended
+        action: Updates VM expiry in database
+      - event: SubscriptionCancelled
+        action: Destroys VM via Terraform
+
+    features:
+      - admin_commands: Processes ECIES-encrypted commands from admin wallet
+      - nft_reconciliation: Periodic check (5 min) to sync local NFT state with chain
+
+  admin_commands:
+    language: typescript
+    path: src/admin/
+    description: |
+      On-chain admin command infrastructure. Admin sends ECIES-encrypted
+      commands as transaction data from a configured wallet. Commands are
+      decrypted, validated (timestamp, nonce anti-replay), and dispatched.
+
+    config_files:
+      - /etc/blockhost/blockhost.yaml (admin.wallet_address, admin.destination_mode)
+      - /etc/blockhost/admin-commands.json (secret command name → action mapping)
+
+    actions:
+      - knock: Temporarily open firewall ports via iptables
+
+  reconcile:
+    language: typescript
+    path: src/reconcile/
+    description: |
+      Periodic NFT reconciliation to fix state drift from partial failures.
+      Compares on-chain totalSupply() with local reserved_nft_tokens map
+      and marks tokens as minted if they exist on-chain but not locally.
+
+  signup_page:
+    path: scripts/generate-signup-page.py
+    template: scripts/signup-template.html
+    description: |
+      Generates static HTML signup page that connects to user's wallet,
+      has them sign a message (for encrypted connection details), and
+      submits the buySubscription transaction.
+
+  server_init:
+    path: scripts/init-server.sh
+    description: |
+      Server initialization script. Generates server keypair for ECIES
+      encryption, creates /etc/blockhost/blockhost.yaml config.
+
+# External package dependencies
+dependencies:
+  blockhost-common:
+    package: blockhost-common
+    description: |
+      Shared configuration directory structure and Python modules.
+      Provides /etc/blockhost/, /var/lib/blockhost/, and the blockhost
+      Python package for config loading and VM database access.
+
+  blockhost-provisioner-proxmox:
+    package: blockhost-provisioner-proxmox
+    install_path: /usr/lib/blockhost-provisioner-proxmox
+    description: |
+      VM provisioning scripts for Proxmox. Creates VMs with cloud-init
+      configured for NFT-based web3 SSH authentication.
+      Installed as a separate .deb package.
+
+  libpam-web3-tools:
+    package: libpam-web3-tools
+    version: ">= 0.5.0"
+    description: |
+      Provides AccessCredentialNFT contract source and ABI for deployment,
+      plus signing page generator for per-NFT authentication pages.
+      Contract at: /usr/share/libpam-web3-tools/contracts/
+      Signing page generator at: /usr/share/libpam-web3-tools/signing-page/
+
+# Environment setup
+environment:
+  shared_env_file: ~/projects/sharedenv/blockhost.env
+  required_variables:
+    - DEPLOYER_PRIVATE_KEY  # Wallet for deploying contracts and minting NFTs
+    - BLOCKHOST_CONTRACT    # Deployed subscription contract address
+    - NFT_CONTRACT          # Deployed NFT contract address (same as above currently)
+    - RPC_URL               # Ethereum RPC endpoint
+
+# CLI commands
+commands:
+  install:
+    command: npm install
+    description: Install Node.js dependencies
+
+  compile:
+    command: npm run compile
+    description: Compile Solidity contracts
+
+  test:
+    command: npm test
+    description: Run contract tests
+
+  deploy_local:
+    command: npm run deploy:local
+    description: Deploy to local Hardhat node
+
+  deploy_sepolia:
+    command: source ~/projects/sharedenv/blockhost.env && npm run deploy:sepolia
+    description: Deploy to Sepolia testnet
+
+  monitor:
+    command: source ~/projects/sharedenv/blockhost.env && npm run monitor
+    description: Start the blockchain event monitor
+
+  generate_signup:
+    command: python3 scripts/generate-signup-page.py --output signup.html
+    description: Generate signup page HTML
+
+  init_server:
+    command: sudo ./scripts/init-server.sh
+    description: Initialize server (generates keypair, creates config)
+
+# Deployment architecture
+deployment:
+  blockchain:
+    network: Sepolia (testnet) or Ethereum mainnet
+    contracts:
+      - BlockhostSubscriptions (handles subscriptions + NFT minting)
+
+  server:
+    components:
+      - blockhost-monitor (systemd service watching blockchain)
+    requires:
+      - blockhost-common (config directories and Python modules)
+      - blockhost-provisioner-proxmox (VM provisioning scripts)
+
+    config_files:
+      - /etc/blockhost/blockhost.yaml (server keypair, public secret, admin wallet)
+      - /etc/blockhost/web3-defaults.yaml (blockchain config)
+      - /etc/blockhost/admin-commands.json (admin command definitions)
+      - /var/lib/blockhost/vms.json (VM database with reserved_nft_tokens)
+
+  vm:
+    template: debian-12-web3-template (VMID 9001)
+    authentication: NFT-based web3 (pam_web3 module)
+    services:
+      - web3-auth-svc (verifies NFT ownership, serves signing page over HTTPS on port 8443)
+
+# Flow diagram
+workflow: |
+  1. User visits signup page (static HTML)
+  2. User connects wallet, signs message, submits buySubscription tx
+  3. Contract emits SubscriptionCreated event with userEncrypted payload
+  4. Monitor detects event, calls vm-generator.py
+  5. vm-generator.py:
+     a. Allocates VMID and IP from database
+     b. Reserves NFT token ID
+     c. Generates Terraform config with cloud-init
+     d. Runs terraform apply to create VM
+     e. Mints NFT to user with embedded signing page
+  6. VM boots with web3-only SSH authentication
+  7. User visits VM:8443 (signing page served by web3-auth-svc over HTTPS)
+  8. User signs with wallet → gets OTP
+  9. User SSHs to VM, enters OTP → authenticated
+
+# Integration notes
+integration:
+  setup_steps:
+    - Install blockhost-common (provides config directories and Python modules)
+    - Install blockhost-provisioner-proxmox (provides VM provisioning scripts)
+    - Install blockhost-engine
+    - Run blockhost-init to generate server keypair and config
+    - Deploy contract: npm run deploy:sepolia (or use deployed address)
+    - Update nft_contract in /etc/blockhost/web3-defaults.yaml
+    - Fund deployer wallet with ETH for gas
+    - Start monitor: systemctl enable --now blockhost-monitor
+
+  vm_provisioning:
+    description: |
+      The monitor calls vm-generator.py from the blockhost-provisioner-proxmox package.
+      Scripts are installed at /usr/lib/blockhost-provisioner-proxmox/scripts/

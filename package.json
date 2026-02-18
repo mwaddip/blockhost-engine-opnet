@@ -1,0 +1,35 @@
+{
+  "name": "blockhost-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Subscription management system with OPNet smart contracts and monitoring server",
+  "bin": {
+    "bw": "./src/bw/index.ts",
+    "ab": "./src/ab/index.ts",
+    "is": "./src/is/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "monitor": "npx tsx src/monitor/index.ts"
+  },
+  "dependencies": {
+    "opnet": "1.8.1-beta.13",
+    "@btc-vision/transaction": "1.8.0-beta.10",
+    "@btc-vision/bitcoin": "7.0.0-alpha.11",
+    "@btc-vision/ecpair": "4.0.2",
+    "@btc-vision/bip32": "7.0.2",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "latest",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "@noble/hashes": "2.0.1"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

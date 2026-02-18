@@ -1,0 +1,17 @@
+{
+    "name": "deploy-test-token",
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "deploy": "npx tsx deploy.ts"
+    },
+    "dependencies": {
+        "@btc-vision/transaction": "1.8.0-beta.10",
+        "@btc-vision/bitcoin": "7.0.0-alpha.11",
+        "opnet": "1.8.1-beta.13"
+    },
+    "devDependencies": {
+        "tsx": "^4.0.0",
+        "typescript": "^5.9.3"
+    }
+}
