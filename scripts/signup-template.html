@@ -429,8 +429,8 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="offline-signature">Paste Your Signature (base64)</label>
-                        <textarea id="offline-signature" placeholder="Base64-encoded ML-DSA signature..."></textarea>
+                        <label for="offline-signature">Paste Your Schnorr Signature (hex)</label>
+                        <textarea id="offline-signature" placeholder="Hex-encoded Schnorr signature..."></textarea>
                     </div>
 
                     <button id="btn-decrypt-offline">Decrypt Connection Info</button>
@@ -449,7 +449,7 @@
 
         <!-- Send Admin Command Section -->
         <div class="section-title">Send Command</div>
-        <p class="section-subtitle">Send encrypted admin commands to the server</p>
+        <p class="section-subtitle">Send authenticated admin commands to the server</p>
 
         <div class="card" id="admin-command-card">
             <div id="admin-not-connected">
@@ -460,19 +460,11 @@
 
             <div id="admin-connected" class="hidden">
                 <div class="form-group">
-                    <label for="command-name">Command Name</label>
-                    <input type="text" id="command-name" placeholder="Enter your secret command name">
-                    <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: -0.5rem;">
-                        The command name is a secret string configured on your server
-                    </p>
+                    <label for="command-input">Command</label>
+                    <input type="text" id="command-input" placeholder="e.g. letmein 2a01:abcd::243">
                 </div>
 
-                <div class="form-group">
-                    <label for="command-params">Parameters (optional JSON)</label>
-                    <textarea id="command-params" placeholder='{ "duration": 300 }'></textarea>
-                </div>
-
-                <button id="btn-send-command">Encrypt & Send Command</button>
+                <button id="btn-send-command">Sign & Send Command</button>
                 <div id="command-status"></div>
 
                 <div id="command-result" class="hidden" style="margin-top: 1rem;">
@@ -563,8 +555,23 @@
           inputs: [{ name: 'planId', type: ABI.UINT256 }],
           outputs: [{ name: 'name', type: ABI.STRING }, { name: 'pricePerDay', type: ABI.UINT256 }, { name: 'active', type: ABI.BOOL }] },
         { name: 'buySubscription', type: BitcoinAbiTypes.Function, constant: false,
-          inputs: [{ name: 'planId', type: ABI.UINT256 }, { name: 'days', type: ABI.UINT256 }, { name: 'userEncrypted', type: ABI.BYTES }],
+          inputs: [{ name: 'planId', type: ABI.UINT256 }, { name: 'days', type: ABI.UINT256 }, { name: 'userEncrypted', type: ABI.STRING }],
           outputs: [{ name: 'subscriptionId', type: ABI.UINT256 }] },
+    ];
+
+    var NFT_ABI = [
+        { name: 'balanceOf', type: BitcoinAbiTypes.Function, constant: true,
+          inputs: [{ name: 'owner', type: ABI.ADDRESS }],
+          outputs: [{ name: 'balance', type: ABI.UINT256 }] },
+        { name: 'ownerOf', type: BitcoinAbiTypes.Function, constant: true,
+          inputs: [{ name: 'tokenId', type: ABI.UINT256 }],
+          outputs: [{ name: 'owner', type: ABI.ADDRESS }] },
+        { name: 'tokenOfOwnerByIndex', type: BitcoinAbiTypes.Function, constant: true,
+          inputs: [{ name: 'owner', type: ABI.ADDRESS }, { name: 'index', type: ABI.UINT256 }],
+          outputs: [{ name: 'tokenId', type: ABI.UINT256 }] },
+        { name: 'getUserEncrypted', type: BitcoinAbiTypes.Function, constant: true,
+          inputs: [{ name: 'tokenId', type: ABI.UINT256 }],
+          outputs: [{ name: 'userEncrypted', type: ABI.STRING }] },
     ];
 
     // Shared provider cache (avoids creating multiple providers for the same RPC)
@@ -584,6 +591,10 @@
         getOP20Contract: function(rpcUrl, tokenAddress, sender) {
             var provider = getProvider(rpcUrl);
             return getContract(tokenAddress, OP_20_ABI, provider, provider.network, sender);
+        },
+        getNftContract: function(rpcUrl, contractAddress, sender) {
+            var provider = getProvider(rpcUrl);
+            return getContract(contractAddress, NFT_ABI, provider, provider.network, sender);
         },
         // Resolve a Bitcoin address or contract hex to an OPNet Address object via RPC
         resolveAddress: async function(rpcUrl, address, isContract) {
@@ -775,9 +786,6 @@
         }
     }
 
-    // Load user's NFTs
-    // TODO: OPNet contract interaction — requires opnet package or raw RPC calls
-    // NFT loading needs: getContract<IAccessCredentialNFT>, balanceOf(addr), tokenOfOwnerByIndex(addr, i), getUserEncrypted(tokenId)
     async function loadUserNfts() {
         if (!CONFIG.nftContract || !userAddress) {
             console.warn('NFT contract not configured or wallet not connected');
@@ -791,13 +799,59 @@
         document.getElementById('servers-decrypt').classList.add('hidden');
         document.getElementById('connection-result').classList.add('hidden');
 
-        // TODO: Replace with OPNet RPC contract calls
-        // const provider = new JSONRpcProvider(CONFIG.rpcUrl, network);
-        // const nftContract = getContract<IAccessCredentialNFT>(CONFIG.nftContract, NFT_ABI, provider, network);
-        // const balance = await nftContract.balanceOf(Address.fromString(userAddress));
-        console.warn('loadUserNfts: stubbed — OPNet contract interaction not yet available in browser');
-        document.getElementById('servers-loading').classList.add('hidden');
-        document.getElementById('servers-empty').classList.remove('hidden');
+        try {
+            // Resolve wallet address to OPNet Address object
+            var opnetAddr = await window.OPNet.resolveAddress(CONFIG.rpcUrl, userAddress);
+            if (!opnetAddr) {
+                throw new Error('Could not resolve wallet address');
+            }
+
+            var nftContract = window.OPNet.getNftContract(CONFIG.rpcUrl, CONFIG.nftContract, opnetAddr);
+
+            // Get balance
+            var balanceResult = await nftContract.balanceOf(opnetAddr);
+            var balance = balanceResult.properties?.balance || 0n;
+            console.log('NFT balance:', balance.toString());
+
+            if (balance === 0n || balance === 0) {
+                document.getElementById('servers-loading').classList.add('hidden');
+                document.getElementById('servers-empty').classList.remove('hidden');
+                return;
+            }
+
+            // Fetch each token
+            userNfts = [];
+            for (var i = 0n; i < balance; i++) {
+                var tokenResult = await nftContract.tokenOfOwnerByIndex(opnetAddr, i);
+                var tokenId = tokenResult.properties?.tokenId;
+                if (!tokenId && tokenId !== 0n) continue;
+
+                var encResult = await nftContract.getUserEncrypted(tokenId);
+                var userEncrypted = encResult.properties?.userEncrypted || '';
+
+                userNfts.push({
+                    tokenId: tokenId.toString(),
+                    name: 'Server #' + tokenId.toString(),
+                    userEncrypted: userEncrypted,
+                });
+            }
+
+            document.getElementById('servers-loading').classList.add('hidden');
+
+            if (userNfts.length > 0) {
+                document.getElementById('servers-list').classList.remove('hidden');
+                renderNftList();
+            } else {
+                document.getElementById('servers-empty').classList.remove('hidden');
+            }
+
+        } catch (err) {
+            console.error('Error loading NFTs:', err);
+            document.getElementById('servers-loading').classList.add('hidden');
+            document.getElementById('servers-empty').classList.remove('hidden');
+            document.getElementById('servers-empty').innerHTML =
+                '<p>Error loading NFTs: ' + (err.message || err) + '</p>';
+        }
     }
 
     // Render NFT list
@@ -884,10 +938,9 @@
         }
     });
 
-    // Lookup NFT (offline mode)
-    // TODO: OPNet contract interaction — needs getUserEncrypted(tokenId) via RPC
     document.getElementById('btn-lookup-nft').addEventListener('click', async function() {
         var statusEl = document.getElementById('offline-lookup-status');
+        var btn = document.getElementById('btn-lookup-nft');
 
         if (!CONFIG.nftContract) {
             showStatus(statusEl, 'NFT contract not configured', 'error');
@@ -900,17 +953,45 @@
             return;
         }
 
-        // TODO: Replace with OPNet RPC contract call
-        // const provider = new JSONRpcProvider(CONFIG.rpcUrl, network);
-        // const nftContract = getContract<IAccessCredentialNFT>(CONFIG.nftContract, NFT_ABI, provider, network);
-        // const userEncrypted = await nftContract.getUserEncrypted(u256.fromString(tokenId));
-        showStatus(statusEl, 'NFT lookup not yet available — OPNet contract interaction pending', 'error');
+        try {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Looking up...';
+            showStatus(statusEl, 'Querying NFT contract...', 'info');
 
-        // When implemented, this section will:
-        // 1. Fetch userEncrypted from contract
-        // 2. Display the publicSecret to sign
-        // 3. Display the encrypted data
-        // 4. Show signing instructions for OPWallet CLI
+            var nftContract = window.OPNet.getNftContract(CONFIG.rpcUrl, CONFIG.nftContract);
+
+            var encResult = await nftContract.getUserEncrypted(BigInt(tokenId));
+            var userEncrypted = encResult.properties?.userEncrypted || '';
+
+            if (!userEncrypted) {
+                showStatus(statusEl, 'No encrypted data found for token #' + tokenId, 'error');
+                return;
+            }
+
+            window.offlineNftData = { tokenId: tokenId, userEncrypted: userEncrypted };
+
+            showStatus(statusEl,
+                'Found encrypted data for token #' + tokenId + ' (' + userEncrypted.length + ' chars).', 'success');
+
+            // Populate the offline info fields
+            document.getElementById('offline-public-secret').textContent = CONFIG.publicSecret;
+            document.getElementById('offline-encrypted-data').textContent = userEncrypted;
+            document.getElementById('offline-cli-instructions').innerHTML =
+                'Sign the message above using Schnorr (not ML-DSA) and paste the hex signature below.<br><br>' +
+                '<code>npm install @noble/curves</code><br><br>' +
+                '<code>node -e "const {schnorr}=require(\'@noble/curves/secp256k1\');\n' +
+                'const msg=Buffer.from(\'' + CONFIG.publicSecret + '\');\n' +
+                'const sig=schnorr.sign(msg, \'YOUR_PRIVATE_KEY_HEX\');\n' +
+                'console.log(Buffer.from(sig).toString(\'hex\'));"</code>';
+            document.getElementById('offline-nft-info').classList.remove('hidden');
+
+        } catch (err) {
+            console.error('NFT lookup error:', err);
+            showStatus(statusEl, 'Lookup failed: ' + (err.message || err), 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Lookup NFT';
+        }
     });
 
     // Decrypt (offline mode)
@@ -919,7 +1000,7 @@
         var signatureInput = document.getElementById('offline-signature').value.trim();
 
         if (!signatureInput) {
-            showStatus(statusEl, 'Please paste your ML-DSA signature (base64)', 'error');
+            showStatus(statusEl, 'Please paste your Schnorr signature (hex)', 'error');
             return;
         }
 
@@ -938,8 +1019,8 @@
                 });
             }
 
-            // Decode base64 signature to Uint8Array, then derive key via SHAKE256
-            var sigBytes = base64ToUint8(signatureInput);
+            // Decode hex signature to Uint8Array, then derive key via SHAKE256
+            var sigBytes = hexToBytes(signatureInput);
             var keyBytes = window.deriveKey(sigBytes);
             var decrypted = await decryptAesGcm(keyBytes, window.offlineNftData.userEncrypted);
 
@@ -1157,8 +1238,7 @@
             var subsContract = window.OPNet.getSubscriptionsContract(CONFIG.rpcUrl, CONFIG.subscriptionContract, opnetAddress);
             subsContract.setAccessList(allowanceSim.accessList);
 
-            var encryptedBytes = hexToBytes(encryptedSignature);
-            var buySim = await subsContract.buySubscription(BigInt(planId), BigInt(days), encryptedBytes);
+            var buySim = await subsContract.buySubscription(BigInt(planId), BigInt(days), encryptedSignature);
             if ('error' in buySim) {
                 throw new Error('Purchase simulation failed: ' + buySim.error);
             }
@@ -1205,19 +1285,29 @@
         }
     });
 
-    // Admin Command: Send encrypted command
-    // TODO: OPNet transaction submission — admin commands need to be sent as OPNet transactions
-    // The command is ECIES-encrypted and included as calldata in a transaction
+    // Admin Command: HMAC-authenticated command sent via OP_RETURN
+    // Format: nonce(3) + " " + command [+ " " + host] + HMAC-SHA256(sharedKey, message)[:8]
+    // The shared key is SHAKE256(admin's Schnorr signature of publicSecret)
+    // — same key used for NFT userEncrypted. Admin must sign publicSecret first (View My Servers tab).
+
+    // Generate a random 3-char alphanumeric nonce
+    var _adminNonce = (function() {
+        var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        var nonce = '';
+        var rand = crypto.getRandomValues(new Uint8Array(3));
+        for (var i = 0; i < 3; i++) nonce += chars[rand[i] % chars.length];
+        return nonce;
+    })();
+
     document.getElementById('btn-send-command').addEventListener('click', async function() {
         var btn = document.getElementById('btn-send-command');
         var statusEl = document.getElementById('command-status');
         var resultEl = document.getElementById('command-result');
 
-        var commandName = document.getElementById('command-name').value.trim();
-        var paramsText = document.getElementById('command-params').value.trim();
+        var commandInput = document.getElementById('command-input').value.trim();
 
-        if (!commandName) {
-            showStatus(statusEl, 'Please enter a command name', 'error');
+        if (!commandInput) {
+            showStatus(statusEl, 'Please enter a command', 'error');
             return;
         }
 
@@ -1228,50 +1318,66 @@
 
         try {
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span>Preparing...';
+            btn.innerHTML = '<span class="spinner"></span>Signing...';
 
-            // Parse params if provided
-            var params = {};
-            if (paramsText) {
-                try {
-                    params = JSON.parse(paramsText);
-                } catch (e) {
-                    throw new Error('Invalid JSON in parameters');
-                }
-            }
+            // Build the message: nonce + command (as typed)
+            var message = _adminNonce + ' ' + commandInput;
 
-            // Build command with nonce and timestamp
-            var command = {
-                command: commandName,
-                params: params,
-                nonce: crypto.randomUUID(),
-                timestamp: Math.floor(Date.now() / 1000)
-            };
+            // Sign publicSecret to derive the shared key (same as decrypt flow)
+            showStatus(statusEl, 'Sign the message in OPWallet to authenticate...', 'info');
+            var sigResult = await wallet.signMessage(CONFIG.publicSecret, 'schnorr');
 
-            showStatus(statusEl, 'Encrypting command...', 'info');
-
-            // Wait for ECIES to be ready
-            if (!window.ECIES) {
+            if (!window.deriveKey) {
                 await new Promise(function(resolve) {
                     window.addEventListener('ecies-ready', resolve, { once: true });
                 });
             }
 
-            // Encrypt with server's public key (ECIES)
-            var plaintext = JSON.stringify(command);
-            var ciphertext = await window.ECIES.encrypt(CONFIG.serverPublicKey, plaintext);
+            var sigBytes = typeof sigResult === 'string' ? hexToBytes(sigResult) : new Uint8Array(sigResult);
+            var sharedKey = window.deriveKey(sigBytes);
 
-            // TODO: OPNet transaction submission
-            // Admin commands need to be sent as OPNet transactions with the encrypted payload
-            // This requires the opnet package's transaction building in the browser
-            throw new Error('Command sending not yet available — OPNet transaction submission pending');
+            // HMAC-SHA256(sharedKey, message), truncated to 8 bytes
+            showStatus(statusEl, 'Computing HMAC...', 'info');
+            var cryptoKey = await crypto.subtle.importKey(
+                'raw', sharedKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+            var messageBytes = new TextEncoder().encode(message);
+            var hmacFull = await crypto.subtle.sign('HMAC', cryptoKey, messageBytes);
+            var hmac8 = new Uint8Array(hmacFull).slice(0, 8);
+
+            // Final payload: message bytes + 8-byte HMAC
+            var payload = new Uint8Array(messageBytes.length + 8);
+            payload.set(messageBytes, 0);
+            payload.set(hmac8, messageBytes.length);
+
+            var payloadHex = Array.from(payload).map(function(b) {
+                return b.toString(16).padStart(2, '0');
+            }).join('');
+
+            console.log('Admin command payload:', message, '(' + payload.length + ' bytes)');
+
+            // Send as OP_RETURN via OPWallet
+            // TODO: OPWallet API for sending a BTC transaction with OP_RETURN data
+            // For now, show the hex payload for manual sending
+            showStatus(statusEl,
+                'Payload ready (' + payload.length + ' bytes). ' +
+                'OP_RETURN sending via OPWallet not yet implemented.<br>' +
+                '<code style="word-break:break-all;">' + payloadHex + '</code>', 'info');
+
+            // Regenerate nonce for next command
+            _adminNonce = (function() {
+                var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+                var nonce = '';
+                var rand = crypto.getRandomValues(new Uint8Array(3));
+                for (var i = 0; i < 3; i++) nonce += chars[rand[i] % chars.length];
+                return nonce;
+            })();
 
         } catch (err) {
             console.error('Command error:', err);
             showStatus(statusEl, err.message || 'Failed to send command', 'error');
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Encrypt & Send Command';
+            btn.textContent = 'Sign & Send Command';
         }
     });
 

@@ -66,7 +66,7 @@ async function processBlock(
     const txHash = tx.hash;
     for (const event of decoded) {
       try {
-        await dispatchEvent(event, txHash);
+        await dispatchEvent(event, txHash, contract);
       } catch (err) {
         console.error(`Error handling event from tx ${txHash}: ${err}`);
       }
@@ -78,17 +78,20 @@ async function processBlock(
  * Dispatch an ABI-decoded OPNetEvent to the appropriate handler.
  * After decodeEvents(), event.type is the name and event.properties has decoded fields.
  */
-async function dispatchEvent(event: any, txHash: string): Promise<void> {
+async function dispatchEvent(event: any, txHash: string, contract: IBlockhostSubscriptions): Promise<void> {
   const eventName: string = event.type ?? '';
   const props = event.properties ?? {};
 
   switch (eventName) {
     case "SubscriptionCreated": {
-      // userEncrypted may be Uint8Array (BYTES type) — convert to hex
-      const rawUE = props.userEncrypted;
-      const userEncrypted = rawUE instanceof Uint8Array
-        ? '0x' + Array.from(rawUE).map((b: number) => b.toString(16).padStart(2, '0')).join('')
-        : String(rawUE ?? '0x');
+      // userEncrypted is stored on-chain (not in the event) — read via contract call
+      let userEncrypted = '0x';
+      try {
+        const result = await contract.getUserEncrypted(BigInt(props.subscriptionId));
+        userEncrypted = String((result as any).properties?.data ?? '0x');
+      } catch (err) {
+        console.warn(`[WARN] Could not read userEncrypted for sub ${props.subscriptionId}: ${err}`);
+      }
 
       await handleSubscriptionCreated({
         subscriptionId: props.subscriptionId,

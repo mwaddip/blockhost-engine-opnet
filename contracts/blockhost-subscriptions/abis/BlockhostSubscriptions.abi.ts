@@ -114,7 +114,7 @@ export const BlockhostSubscriptionsAbi = [
         inputs: [
             { name: 'planId', type: ABIDataTypes.UINT256 },
             { name: 'days', type: ABIDataTypes.UINT256 },
-            { name: 'userEncrypted', type: ABIDataTypes.BYTES },
+            { name: 'userEncrypted', type: ABIDataTypes.STRING },
         ],
         outputs: [{ name: 'subscriptionId', type: ABIDataTypes.UINT256 }],
         type: BitcoinAbiTypes.Function,
@@ -182,8 +182,18 @@ export const BlockhostSubscriptionsAbi = [
     },
     {
         name: 'getSubscriptionsBySubscriber',
-        inputs: [{ name: 'subscriber', type: ABIDataTypes.ADDRESS }],
+        inputs: [
+            { name: 'subscriber', type: ABIDataTypes.ADDRESS },
+            { name: 'offset', type: ABIDataTypes.UINT256 },
+            { name: 'limit', type: ABIDataTypes.UINT256 },
+        ],
         outputs: [{ name: 'subscriptionIds', type: ABIDataTypes.UINT256 }],
+        type: BitcoinAbiTypes.Function,
+    },
+    {
+        name: 'getSubscriptionCountBySubscriber',
+        inputs: [{ name: 'subscriber', type: ABIDataTypes.ADDRESS }],
+        outputs: [{ name: 'count', type: ABIDataTypes.UINT256 }],
         type: BitcoinAbiTypes.Function,
     },
     {
@@ -201,7 +211,7 @@ export const BlockhostSubscriptionsAbi = [
     {
         name: 'getUserEncrypted',
         inputs: [{ name: 'subscriptionId', type: ABIDataTypes.UINT256 }],
-        outputs: [{ name: 'data', type: ABIDataTypes.BYTES }],
+        outputs: [{ name: 'data', type: ABIDataTypes.STRING }],
         type: BitcoinAbiTypes.Function,
     },
     ...BlockhostSubscriptionsEvents,

@@ -128,7 +128,7 @@
                 },
                 {
                     "name": "userEncrypted",
-                    "type": "BYTES"
+                    "type": "STRING"
                 }
             ],
             "outputs": [
@@ -299,11 +299,37 @@
                 {
                     "name": "subscriber",
                     "type": "ADDRESS"
+                },
+                {
+                    "name": "offset",
+                    "type": "UINT256"
+                },
+                {
+                    "name": "limit",
+                    "type": "UINT256"
                 }
             ],
             "outputs": [
                 {
                     "name": "subscriptionIds",
+                    "type": "UINT256"
+                }
+            ]
+        },
+        {
+            "name": "getSubscriptionCountBySubscriber",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriber",
+                    "type": "ADDRESS"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "count",
                     "type": "UINT256"
                 }
             ]
@@ -348,7 +374,7 @@
             "outputs": [
                 {
                     "name": "data",
-                    "type": "BYTES"
+                    "type": "STRING"
                 }
             ]
         }

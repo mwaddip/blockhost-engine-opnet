@@ -68,13 +68,19 @@ function formatVmName(subscriptionId: bigint): string {
 }
 
 /**
- * Calculate days from now until expiry timestamp
+ * Calculate days from expiry block height.
+ * expiresAt is a block height (not timestamp). We estimate days
+ * from the difference in blocks using BLOCKS_PER_DAY = 144.
+ * currentBlock is passed from the monitor; if unavailable, estimate from expiresAt.
  */
-function calculateExpiryDays(expiresAt: bigint): number {
-  const expiryMs = Number(expiresAt) * 1000;
-  const nowMs = Date.now();
-  const daysRemaining = Math.ceil((expiryMs - nowMs) / (1000 * 60 * 60 * 24));
-  return Math.max(1, daysRemaining); // At least 1 day
+const BLOCKS_PER_DAY = 144n;
+
+function calculateExpiryDays(expiresAtBlock: bigint, currentBlock?: bigint): number {
+  const now = currentBlock ?? 0n;
+  if (expiresAtBlock <= now) return 1; // Already expired, at least 1 day for provisioning
+  const blocksRemaining = expiresAtBlock - now;
+  const days = Number(blocksRemaining / BLOCKS_PER_DAY);
+  return Math.max(1, days);
 }
 
 /**
@@ -219,7 +225,7 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
   console.log(`Subscription ID: ${event.subscriptionId}`);
   console.log(`Plan ID: ${event.planId}`);
   console.log(`Subscriber: ${event.subscriber}`);
-  console.log(`Expires At: ${new Date(Number(event.expiresAt) * 1000).toISOString()}`);
+  console.log(`Expires At Block: ${event.expiresAt}`);
   console.log(`Paid Amount: ${Number(event.paidAmount)} sats`);
   console.log(`User Encrypted: ${event.userEncrypted.length > 10 ? event.userEncrypted.slice(0, 10) + "..." : event.userEncrypted}`);
   console.log("------------------------------------------");
@@ -316,14 +322,12 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
 
 export async function handleSubscriptionExtended(event: SubscriptionExtendedEvent, txHash: string): Promise<void> {
   const vmName = formatVmName(event.subscriptionId);
-  const newExpiryDate = new Date(Number(event.newExpiresAt) * 1000);
-
   console.log("\n========== SUBSCRIPTION EXTENDED ==========");
   console.log(`Transaction: ${txHash}`);
   console.log(`Subscription ID: ${event.subscriptionId}`);
   console.log(`Plan ID: ${event.planId}`);
   console.log(`Extended By: ${event.extendedBy}`);
-  console.log(`New Expires At: ${newExpiryDate.toISOString()}`);
+  console.log(`New Expires At Block: ${event.newExpiresAt}`);
   console.log(`Paid Amount: ${Number(event.paidAmount)} sats`);
   console.log("-------------------------------------------");
   console.log(`Updating expiry for VM: ${vmName}`);

@@ -225,7 +225,7 @@ export const BLOCKHOST_SUBSCRIPTIONS_ABI: BitcoinInterfaceAbi = [
         inputs: [
             { name: 'planId', type: ABI.UINT256 },
             { name: 'days', type: ABI.UINT256 },
-            { name: 'userEncrypted', type: ABI.BYTES },
+            { name: 'userEncrypted', type: ABI.STRING },
         ],
         outputs: [{ name: 'subscriptionId', type: ABI.UINT256 }],
     },
@@ -302,8 +302,19 @@ export const BLOCKHOST_SUBSCRIPTIONS_ABI: BitcoinInterfaceAbi = [
         name: 'getSubscriptionsBySubscriber',
         type: AbiType.Function,
         constant: true,
-        inputs: [{ name: 'subscriber', type: ABI.ADDRESS }],
+        inputs: [
+            { name: 'subscriber', type: ABI.ADDRESS },
+            { name: 'offset', type: ABI.UINT256 },
+            { name: 'limit', type: ABI.UINT256 },
+        ],
         outputs: [{ name: 'subscriptionIds', type: ABI.UINT256 }],
+    },
+    {
+        name: 'getSubscriptionCountBySubscriber',
+        type: AbiType.Function,
+        constant: true,
+        inputs: [{ name: 'subscriber', type: ABI.ADDRESS }],
+        outputs: [{ name: 'count', type: ABI.UINT256 }],
     },
     {
         name: 'getTotalSubscriptionCount',
@@ -318,6 +329,13 @@ export const BLOCKHOST_SUBSCRIPTIONS_ABI: BitcoinInterfaceAbi = [
         constant: true,
         inputs: [],
         outputs: [{ name: 'count', type: ABI.UINT256 }],
+    },
+    {
+        name: 'getUserEncrypted',
+        type: AbiType.Function,
+        constant: true,
+        inputs: [{ name: 'subscriptionId', type: ABI.UINT256 }],
+        outputs: [{ name: 'data', type: ABI.STRING }],
     },
     {
         name: 'PlanCreated',
@@ -361,7 +379,6 @@ export const BLOCKHOST_SUBSCRIPTIONS_ABI: BitcoinInterfaceAbi = [
             { name: 'subscriber', type: ABI.ADDRESS },
             { name: 'expiresAt', type: ABI.UINT256 },
             { name: 'paidAmount', type: ABI.UINT256 },
-            { name: 'userEncrypted', type: ABI.BYTES },
         ],
     },
     {
@@ -408,7 +425,7 @@ export interface IBlockhostSubscriptions extends BaseContractProperties {
     withdraw(to: Address): Promise<CallResult<Record<string, never>, []>>;
     setAcceptingSubscriptions(accepting: boolean): Promise<CallResult<Record<string, never>, []>>;
     setGracePeriod(days: bigint): Promise<CallResult<Record<string, never>, []>>;
-    buySubscription(planId: bigint, days: bigint, userEncrypted: Uint8Array): Promise<CallResult<{ subscriptionId: bigint }, []>>;
+    buySubscription(planId: bigint, days: bigint, userEncrypted: string): Promise<CallResult<{ subscriptionId: bigint }, []>>;
     extendSubscription(subscriptionId: bigint, days: bigint): Promise<CallResult<Record<string, never>, []>>;
     isAcceptingSubscriptions(): Promise<CallResult<{ accepting: boolean }, []>>;
     getPaymentToken(): Promise<CallResult<{ token: Address }, []>>;
@@ -417,8 +434,10 @@ export interface IBlockhostSubscriptions extends BaseContractProperties {
     getSubscription(subscriptionId: bigint): Promise<CallResult<{ planId: bigint; subscriber: Address; expiresAt: bigint; isActive: boolean; cancelled: boolean }, []>>;
     isSubscriptionActive(subscriptionId: bigint): Promise<CallResult<{ active: boolean }, []>>;
     daysRemaining(subscriptionId: bigint): Promise<CallResult<{ days: bigint }, []>>;
-    getSubscriptionsBySubscriber(subscriber: Address): Promise<CallResult<{ subscriptionIds: bigint }, []>>;
+    getSubscriptionsBySubscriber(subscriber: Address, offset: bigint, limit: bigint): Promise<CallResult<{ subscriptionIds: bigint }, []>>;
+    getSubscriptionCountBySubscriber(subscriber: Address): Promise<CallResult<{ count: bigint }, []>>;
     getTotalSubscriptionCount(): Promise<CallResult<{ count: bigint }, []>>;
     getTotalPlanCount(): Promise<CallResult<{ count: bigint }, []>>;
+    getUserEncrypted(subscriptionId: bigint): Promise<CallResult<{ data: string }, []>>;
 }
 

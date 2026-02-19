@@ -184,6 +184,16 @@ export type GetSubscriptionsBySubscriber = CallResult<
 >;
 
 /**
+ * @description Represents the result of the getSubscriptionCountBySubscriber function call.
+ */
+export type GetSubscriptionCountBySubscriber = CallResult<
+    {
+        count: bigint;
+    },
+    OPNetEvent<never>[]
+>;
+
+/**
  * @description Represents the result of the getTotalSubscriptionCount function call.
  */
 export type GetTotalSubscriptionCount = CallResult<
@@ -208,7 +218,7 @@ export type GetTotalPlanCount = CallResult<
  */
 export type GetUserEncrypted = CallResult<
     {
-        data: Uint8Array;
+        data: string;
     },
     OPNetEvent<never>[]
 >;
@@ -224,7 +234,7 @@ export interface IBlockhostSubscriptions extends IOP_NETContract {
     withdraw(to: Address): Promise<Withdraw>;
     setAcceptingSubscriptions(accepting: boolean): Promise<SetAcceptingSubscriptions>;
     setGracePeriod(days: bigint): Promise<SetGracePeriod>;
-    buySubscription(planId: bigint, days: bigint, userEncrypted: Uint8Array): Promise<BuySubscription>;
+    buySubscription(planId: bigint, days: bigint, userEncrypted: string): Promise<BuySubscription>;
     extendSubscription(subscriptionId: bigint, days: bigint): Promise<ExtendSubscription>;
     isAcceptingSubscriptions(): Promise<IsAcceptingSubscriptions>;
     getPaymentToken(): Promise<GetPaymentToken>;
@@ -233,7 +243,12 @@ export interface IBlockhostSubscriptions extends IOP_NETContract {
     getSubscription(subscriptionId: bigint): Promise<GetSubscription>;
     isSubscriptionActive(subscriptionId: bigint): Promise<IsSubscriptionActive>;
     daysRemaining(subscriptionId: bigint): Promise<DaysRemaining>;
-    getSubscriptionsBySubscriber(subscriber: Address): Promise<GetSubscriptionsBySubscriber>;
+    getSubscriptionsBySubscriber(
+        subscriber: Address,
+        offset: bigint,
+        limit: bigint,
+    ): Promise<GetSubscriptionsBySubscriber>;
+    getSubscriptionCountBySubscriber(subscriber: Address): Promise<GetSubscriptionCountBySubscriber>;
     getTotalSubscriptionCount(): Promise<GetTotalSubscriptionCount>;
     getTotalPlanCount(): Promise<GetTotalPlanCount>;
     getUserEncrypted(subscriptionId: bigint): Promise<GetUserEncrypted>;

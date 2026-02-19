@@ -22,38 +22,9 @@ import {
     ReentrancyLevel,
 } from '@btc-vision/btc-runtime/runtime';
 
-const HEX_CHARS: string = '0123456789abcdef';
-
-function bytesToHex(data: Uint8Array): string {
-    let result: string = '';
-    for (let i: i32 = 0; i < data.length; i++) {
-        const b: u8 = data[i];
-        result += HEX_CHARS.charAt((b >> 4) & 0x0f);
-        result += HEX_CHARS.charAt(b & 0x0f);
-    }
-    return result;
-}
-
-function hexCharToNibble(c: i32): u8 {
-    if (c >= 48 && c <= 57) return <u8>(c - 48);       // '0'-'9'
-    if (c >= 97 && c <= 102) return <u8>(c - 97 + 10);  // 'a'-'f'
-    if (c >= 65 && c <= 70) return <u8>(c - 65 + 10);   // 'A'-'F'
-    return 0;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-    const len: i32 = hex.length / 2;
-    const result: Uint8Array = new Uint8Array(len);
-    for (let i: i32 = 0; i < len; i++) {
-        const hi: u8 = hexCharToNibble(hex.charCodeAt(i * 2));
-        const lo: u8 = hexCharToNibble(hex.charCodeAt(i * 2 + 1));
-        result[i] = (hi << 4) | lo;
-    }
-    return result;
-}
-
-const SECONDS_PER_DAY: u64 = 86400;
+const BLOCKS_PER_DAY: u64 = 144; // ~10min Bitcoin blocks
 const MAX_SUBSCRIPTION_DAYS: u256 = u256.fromU64(36500); // ~100 years
+const MAX_PAGE: u32 = 50;
 
 const TRANSFER_FROM_SELECTOR: u32 = encodeSelector('transferFrom(address,address,uint256)');
 const TRANSFER_SELECTOR: u32 = encodeSelector('transfer(address,uint256)');
@@ -229,7 +200,8 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         if (selector === encodeSelector('getSubscription(uint256)')) return true;
         if (selector === encodeSelector('isSubscriptionActive(uint256)')) return true;
         if (selector === encodeSelector('daysRemaining(uint256)')) return true;
-        if (selector === encodeSelector('getSubscriptionsBySubscriber(address)')) return true;
+        if (selector === encodeSelector('getSubscriptionsBySubscriber(address,uint256,uint256)')) return true;
+        if (selector === encodeSelector('getSubscriptionCountBySubscriber(address)')) return true;
         if (selector === encodeSelector('getTotalSubscriptionCount()')) return true;
         if (selector === encodeSelector('getTotalPlanCount()')) return true;
         if (selector === encodeSelector('getUserEncrypted(uint256)')) return true;
@@ -263,6 +235,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         if (pricePerDay.isZero()) throw new Revert('Price must be positive');
 
         const planId: u256 = this.nextPlanId.value;
+        this.requireSafeU64(planId);
 
         const planIndex: u64 = planId.toU64();
         const nameStore = new StoredString(planNamePointer, planIndex);
@@ -296,6 +269,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const active: bool = calldata.readBoolean();
 
         this.requireValidPlan(planId);
+        this.requireSafeU64(planId);
         if (pricePerDay.isZero()) throw new Revert('Price must be positive');
 
         const planIndex: u64 = planId.toU64();
@@ -324,8 +298,8 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
 
         this.subCancelledMap.set(subscriptionId, u256.One);
 
-        const now: u256 = u256.fromU64(Blockchain.block.medianTimestamp);
-        this.subExpiresAtMap.set(subscriptionId, now);
+        const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
+        this.subExpiresAtMap.set(subscriptionId, currentBlock);
 
         const planId: u256 = this.subPlanIdMap.get(subscriptionId);
         const subscriberU256: u256 = this.subSubscriberMap.get(subscriptionId);
@@ -379,14 +353,14 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
     @method(
         { name: 'planId', type: ABIDataTypes.UINT256 },
         { name: 'days', type: ABIDataTypes.UINT256 },
-        { name: 'userEncrypted', type: ABIDataTypes.BYTES },
+        { name: 'userEncrypted', type: ABIDataTypes.STRING },
     )
     @returns({ name: 'subscriptionId', type: ABIDataTypes.UINT256 })
     @emit('SubscriptionCreated')
     public buySubscription(calldata: Calldata): BytesWriter {
         const planId: u256 = calldata.readU256();
         const days: u256 = calldata.readU256();
-        const userEncrypted: Uint8Array = calldata.readBytesWithLength();
+        const userEncrypted: string = calldata.readStringWithLength();
 
         if (!this.acceptingSubs.value) throw new Revert('Not accepting subscriptions');
         this.requireValidPlan(planId);
@@ -401,9 +375,9 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         this.pullTokens(tokenAddr, Blockchain.tx.sender, totalCost);
 
         const subscriptionId: u256 = this.nextSubId.value;
-        const now: u64 = Blockchain.block.medianTimestamp;
-        const durationSeconds: u64 = days.toU64() * SECONDS_PER_DAY;
-        const expiresAt: u256 = u256.fromU64(now + durationSeconds);
+        const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
+        const durationBlocks: u256 = SafeMath.mul(days, u256.fromU64(BLOCKS_PER_DAY));
+        const expiresAt: u256 = SafeMath.add(currentBlock, durationBlocks);
 
         const subscriber: Address = Blockchain.tx.sender;
 
@@ -417,8 +391,9 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         subArray.save();
 
         // Store userEncrypted on-chain (too large for events, monitor reads via getUserEncrypted)
+        this.requireSafeU64(subscriptionId);
         const encStore = new StoredString(subUserEncryptedPointer, subscriptionId.toU64());
-        encStore.value = bytesToHex(userEncrypted);
+        encStore.value = userEncrypted;
 
         this.nextSubId.value = SafeMath.add(subscriptionId, u256.One);
 
@@ -456,16 +431,15 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const planId: u256 = this.subPlanIdMap.get(subscriptionId);
         if (this.planActiveMap.get(planId).isZero()) throw new Revert('Plan not active');
 
-        const now: u64 = Blockchain.block.medianTimestamp;
-        const nowU256: u256 = u256.fromU64(now);
+        const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
         const currentExpiry: u256 = this.subExpiresAtMap.get(subscriptionId);
 
-        if (currentExpiry < nowU256) {
+        if (currentExpiry < currentBlock) {
             const graceDays: u256 = this.gracePeriod.value;
             if (!graceDays.isZero()) {
-                const graceSeconds: u256 = SafeMath.mul(graceDays, u256.fromU64(SECONDS_PER_DAY));
-                const graceDeadline: u256 = SafeMath.add(currentExpiry, graceSeconds);
-                if (nowU256 > graceDeadline) {
+                const graceBlocks: u256 = SafeMath.mul(graceDays, u256.fromU64(BLOCKS_PER_DAY));
+                const graceDeadline: u256 = SafeMath.add(currentExpiry, graceBlocks);
+                if (currentBlock > graceDeadline) {
                     throw new Revert('Grace period expired');
                 }
             } else {
@@ -479,9 +453,9 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const tokenAddr: Address = this.getPaymentTokenAddress();
         this.pullTokens(tokenAddr, Blockchain.tx.sender, totalCost);
 
-        const durationSeconds: u64 = days.toU64() * SECONDS_PER_DAY;
-        const baseTime: u256 = currentExpiry > nowU256 ? currentExpiry : nowU256;
-        const newExpiresAt: u256 = SafeMath.add(baseTime, u256.fromU64(durationSeconds));
+        const durationBlocks: u256 = SafeMath.mul(days, u256.fromU64(BLOCKS_PER_DAY));
+        const baseBlock: u256 = currentExpiry > currentBlock ? currentExpiry : currentBlock;
+        const newExpiresAt: u256 = SafeMath.add(baseBlock, durationBlocks);
 
         this.subExpiresAtMap.set(subscriptionId, newExpiresAt);
 
@@ -531,6 +505,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
     public getPlan(calldata: Calldata): BytesWriter {
         const planId: u256 = calldata.readU256();
         this.requireValidPlan(planId);
+        this.requireSafeU64(planId);
 
         const planIndex: u64 = planId.toU64();
         const nameStore = new StoredString(planNamePointer, planIndex);
@@ -562,8 +537,8 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const expiresAt: u256 = this.subExpiresAtMap.get(subscriptionId);
         const cancelled: bool = !this.subCancelledMap.get(subscriptionId).isZero();
 
-        const now: u256 = u256.fromU64(Blockchain.block.medianTimestamp);
-        const isActive: bool = !cancelled && expiresAt > now;
+        const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
+        const isActive: bool = !cancelled && expiresAt > currentBlock;
 
         const writer: BytesWriter = new BytesWriter(
             U256_BYTE_LENGTH + ADDRESS_BYTE_LENGTH + U256_BYTE_LENGTH + 1 + 1,
@@ -585,8 +560,8 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         if (!subscriptionId.isZero() && subscriptionId < this.nextSubId.value) {
             const cancelled: bool = !this.subCancelledMap.get(subscriptionId).isZero();
             const expiresAt: u256 = this.subExpiresAtMap.get(subscriptionId);
-            const now: u256 = u256.fromU64(Blockchain.block.medianTimestamp);
-            active = !cancelled && expiresAt > now;
+            const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
+            active = !cancelled && expiresAt > currentBlock;
         }
 
         const writer: BytesWriter = new BytesWriter(1);
@@ -605,10 +580,10 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
 
         if (!cancelled) {
             const expiresAt: u256 = this.subExpiresAtMap.get(subscriptionId);
-            const now: u256 = u256.fromU64(Blockchain.block.medianTimestamp);
-            if (expiresAt > now) {
-                const diff: u256 = SafeMath.sub(expiresAt, now);
-                remaining = SafeMath.div(diff, u256.fromU64(SECONDS_PER_DAY));
+            const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
+            if (expiresAt > currentBlock) {
+                const blocksLeft: u256 = SafeMath.sub(expiresAt, currentBlock);
+                remaining = SafeMath.div(blocksLeft, u256.fromU64(BLOCKS_PER_DAY));
             }
         }
 
@@ -617,18 +592,46 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         return writer;
     }
 
-    @method({ name: 'subscriber', type: ABIDataTypes.ADDRESS })
+    @method(
+        { name: 'subscriber', type: ABIDataTypes.ADDRESS },
+        { name: 'offset', type: ABIDataTypes.UINT256 },
+        { name: 'limit', type: ABIDataTypes.UINT256 },
+    )
     @returns({ name: 'subscriptionIds', type: ABIDataTypes.UINT256 })
     public getSubscriptionsBySubscriber(calldata: Calldata): BytesWriter {
         const subscriber: Address = calldata.readAddress();
-        const subArray = this.getSubscriberSubArray(subscriber);
-        const length: u32 = subArray.getLength();
+        const offset: u32 = calldata.readU256().toU32();
+        const requestedLimit: u32 = calldata.readU256().toU32();
 
-        const writer: BytesWriter = new BytesWriter(4 + length * 32);
-        writer.writeU32(length);
-        for (let i: u32 = 0; i < length; i++) {
-            writer.writeU256(subArray.get(i));
+        const subArray = this.getSubscriberSubArray(subscriber);
+        const total: u32 = subArray.getLength();
+
+        if (offset >= total) {
+            const writer: BytesWriter = new BytesWriter(4);
+            writer.writeU32(0);
+            return writer;
         }
+
+        const actualLimit: u32 = requestedLimit > MAX_PAGE ? MAX_PAGE : requestedLimit;
+        const remaining: u32 = total - offset;
+        const count: u32 = remaining < actualLimit ? remaining : actualLimit;
+
+        const writer: BytesWriter = new BytesWriter(4 + count * 32);
+        writer.writeU32(count);
+        for (let i: u32 = 0; i < count; i++) {
+            writer.writeU256(subArray.get(offset + i));
+        }
+        return writer;
+    }
+
+    @method({ name: 'subscriber', type: ABIDataTypes.ADDRESS })
+    @returns({ name: 'count', type: ABIDataTypes.UINT256 })
+    public getSubscriptionCountBySubscriber(calldata: Calldata): BytesWriter {
+        const subscriber: Address = calldata.readAddress();
+        const subArray = this.getSubscriberSubArray(subscriber);
+        const count: u256 = u256.fromU32(subArray.getLength());
+        const writer: BytesWriter = new BytesWriter(U256_BYTE_LENGTH);
+        writer.writeU256(count);
         return writer;
     }
 
@@ -651,17 +654,17 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
     }
 
     @method({ name: 'subscriptionId', type: ABIDataTypes.UINT256 })
-    @returns({ name: 'data', type: ABIDataTypes.BYTES })
+    @returns({ name: 'data', type: ABIDataTypes.STRING })
     public getUserEncrypted(calldata: Calldata): BytesWriter {
         const subscriptionId: u256 = calldata.readU256();
         this.requireValidSubscription(subscriptionId);
 
+        this.requireSafeU64(subscriptionId);
         const encStore = new StoredString(subUserEncryptedPointer, subscriptionId.toU64());
-        const hex: string = encStore.value;
-        const data: Uint8Array = hexToBytes(hex);
+        const data: string = encStore.value;
 
         const writer: BytesWriter = new BytesWriter(4 + data.length);
-        writer.writeBytesWithLength(data);
+        writer.writeStringWithLength(data);
         return writer;
     }
 
@@ -689,6 +692,12 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
     private requireValidSubscription(subscriptionId: u256): void {
         if (subscriptionId.isZero() || subscriptionId >= this.nextSubId.value) {
             throw new Revert('Subscription not found');
+        }
+    }
+
+    private requireSafeU64(val: u256): void {
+        if (val > u256.fromU64(u64.MAX_VALUE)) {
+            throw new Revert('ID exceeds u64 range');
         }
     }
 
