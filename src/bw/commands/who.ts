@@ -17,58 +17,13 @@
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { getContract, JSONRpcProvider } from 'opnet';
-import { networks, type Network } from '@btc-vision/bitcoin';
 import {
     ACCESS_CREDENTIAL_NFT_ABI,
     type IAccessCredentialNFT,
 } from '../../fund-manager/contract-abis.js';
-import { isValidInternalAddress } from '../../fund-manager/addressbook.js';
+import { loadWeb3Config } from '../../fund-manager/web3-config.js';
 
-const WEB3_DEFAULTS_PATH = '/etc/blockhost/web3-defaults.yaml';
 const BLOCKHOST_CONFIG_PATH = '/etc/blockhost/blockhost.yaml';
-
-interface Web3Config {
-    nftContract: string;
-    rpcUrl: string;
-    network: Network;
-}
-
-function loadWeb3Config(): Web3Config {
-    if (!fs.existsSync(WEB3_DEFAULTS_PATH)) {
-        throw new Error(`Config not found: ${WEB3_DEFAULTS_PATH}`);
-    }
-
-    const raw = yaml.load(
-        fs.readFileSync(WEB3_DEFAULTS_PATH, 'utf8'),
-    ) as Record<string, unknown>;
-    const blockchain = raw['blockchain'] as
-        | Record<string, unknown>
-        | undefined;
-
-    const nftContract = blockchain?.['nft_contract'] as
-        | string
-        | undefined;
-    if (!nftContract || !isValidInternalAddress(nftContract)) {
-        throw new Error(
-            'blockchain.nft_contract not set or invalid in web3-defaults.yaml',
-        );
-    }
-
-    const rpcUrl = blockchain?.['rpc_url'] as string | undefined;
-    if (!rpcUrl) {
-        throw new Error(
-            'blockchain.rpc_url not set in web3-defaults.yaml',
-        );
-    }
-
-    const network = rpcUrl.includes('mainnet')
-        ? networks.bitcoin
-        : rpcUrl.includes('testnet')
-          ? networks.testnet
-          : networks.regtest;
-
-    return { nftContract, rpcUrl, network };
-}
 
 function loadAdminNftId(): number {
     if (!fs.existsSync(BLOCKHOST_CONFIG_PATH)) {

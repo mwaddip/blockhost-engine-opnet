@@ -6,13 +6,14 @@
  */
 
 import * as fs from 'fs';
-import { networks, type Network } from '@btc-vision/bitcoin';
+import { type Network } from '@btc-vision/bitcoin';
 import {
     AddressTypes,
     Mnemonic,
     MLDSASecurityLevel,
     type Wallet,
 } from '@btc-vision/transaction';
+import { loadRpcConfig } from './web3-config.js';
 
 /**
  * Read a mnemonic phrase from a keyfile.
@@ -53,12 +54,8 @@ export function walletFromMnemonic(phrase: string, network: Network): Wallet {
 }
 
 /**
- * Get the default network from the RPC URL environment variable.
- * Falls back to regtest if not determinable.
+ * Get the default network from web3-defaults.yaml configuration.
  */
-export function getNetworkFromEnv(): Network {
-    const rpcUrl = process.env.RPC_URL ?? '';
-    if (rpcUrl.includes('mainnet')) return networks.bitcoin;
-    if (rpcUrl.includes('testnet')) return networks.testnet;
-    return networks.regtest;
+export function getNetworkFromConfig(): Network {
+    return loadRpcConfig().network;
 }

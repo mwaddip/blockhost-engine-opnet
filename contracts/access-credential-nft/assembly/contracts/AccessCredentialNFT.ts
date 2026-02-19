@@ -447,7 +447,7 @@ export class AccessCredentialNFT extends OP_NET {
 
     private getOwnerTokenArray(owner: Address): StoredU256Array {
         if (!this.ownerTokensMap.has(owner)) {
-            const array = new StoredU256Array(ownerTokensMapPointer, owner);
+            const array = new StoredU256Array(ownerTokensMapPointer, owner.slice(0, 30));
             this.ownerTokensMap.set(owner, array);
         }
 

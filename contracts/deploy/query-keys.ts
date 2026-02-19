@@ -1,8 +1,12 @@
 import { JSONRpcProvider } from 'opnet';
 import { networks } from '@btc-vision/bitcoin';
 
-const RPC_URL = 'https://regtest.opnet.org';
-const network = networks.regtest;
+const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://regtest.opnet.org';
+const network = RPC_URL.includes('mainnet')
+    ? networks.bitcoin
+    : RPC_URL.includes('testnet')
+      ? networks.testnet
+      : networks.regtest;
 
 const contracts: Record<string, string> = {
     OPNET_NFT_CONTRACT: process.env.OPNET_NFT_CONTRACT ?? '',

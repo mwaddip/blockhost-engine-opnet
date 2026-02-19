@@ -342,7 +342,7 @@ chmod 755 "$PKG_DIR/usr/bin/blockhost-mint-nft"
 # Deployment scripts (need Hardhat/Node.js for one-time deployment)
 cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$PKG_DIR/opt/blockhost/"
 cp "$PROJECT_DIR/tsconfig.json" "$PROJECT_DIR/hardhat.config.ts" "$PKG_DIR/opt/blockhost/"
-cp "$PROJECT_DIR/scripts/deploy.ts" "$PROJECT_DIR/scripts/create-plan.ts" "$PKG_DIR/opt/blockhost/scripts/"
+cp "$PROJECT_DIR/scripts/deploy.ts" "$PKG_DIR/opt/blockhost/scripts/"
 
 # Contract sources (for deployment/reference)
 cp "$PROJECT_DIR/contracts/BlockhostSubscriptions.sol" "$PKG_DIR/opt/blockhost/contracts/"

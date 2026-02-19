@@ -3429,26 +3429,26 @@
   end
   i32.const 0
   local.set $2
-  block $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1009
+  block $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1008
    local.get $6
    local.get $5
    i32.load
    call $~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#equals
-   br_if $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1009
+   br_if $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1008
    i32.const 1
    local.set $2
    local.get $6
    local.get $5
    i32.load offset=4
    call $~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#equals
-   br_if $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1009
+   br_if $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1008
    i32.const 2
    local.set $2
    local.get $6
    local.get $5
    i32.load offset=8
    call $~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#equals
-   br_if $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1009
+   br_if $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/script/Networks/NetworkManager#fromChainId$1008
    i32.const 8064
    i32.const 7920
    i32.const 82
@@ -4454,15 +4454,6 @@
   end
   local.get $1
  )
- (func $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget (param $0 i32) (param $1 i32) (result i32)
-  local.get $0
-  i32.load offset=4
-  local.get $1
-  i32.const 2
-  i32.shl
-  i32.add
-  i32.load
- )
  (func $~lib/@btc-vision/btc-runtime/runtime/generic/MapUint8Array/MapUint8Array#indexOf (param $0 i32) (param $1 i32) (result i32)
   (local $2 i32)
   (local $3 i32)
@@ -4483,7 +4474,7 @@
     i32.load
     local.get $0
     i32.load offset=8
-    call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+    call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
     local.tee $4
     i32.load offset=8
     local.get $1
@@ -4585,7 +4576,7 @@
       local.get $0
       i32.load
       local.get $6
-      call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+      call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
       local.tee $2
       i32.load offset=8
       i32.ne
@@ -4672,7 +4663,7 @@
      local.get $0
      i32.load
      local.get $6
-     call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+     call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
      local.tee $2
      i32.load offset=8
      local.get $4
@@ -4962,7 +4953,7 @@
    local.get $0
    i32.load offset=4
    local.get $1
-   call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+   call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
    return
   end
   i32.const 0
@@ -5766,6 +5757,7 @@
  )
  (func $assembly/contracts/AccessCredentialNFT/AccessCredentialNFT#getOwnerTokenArray (param $0 i32) (param $1 i32) (result i32)
   (local $2 i32)
+  (local $3 i32)
   local.get $0
   i32.load offset=36
   local.get $1
@@ -5774,15 +5766,20 @@
   call $"~lib/map/Map<~lib/@btc-vision/btc-runtime/runtime/types/Address/Address,~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredU256Array/StoredU256Array>#find"
   i32.eqz
   if
-   i32.const 2
-   global.set $~argumentsLength
    global.get $assembly/contracts/AccessCredentialNFT/ownerTokensMapPointer
    local.set $2
+   local.get $1
+   i32.const 0
+   i32.const 30
+   call $~lib/typedarray/Uint8Array#slice
+   local.set $3
+   i32.const 2
+   global.set $~argumentsLength
    i32.const 56
    i32.const 38
    call $~lib/rt/stub/__new
    local.get $2
-   local.get $1
+   local.get $3
    i64.const 0
    i64.const 0
    i64.const 0
@@ -6089,7 +6086,7 @@
   i32.add
   i32.load
   local.set $1
-  block $__inlined_func$~lib/set/Set<u32>#find$1029
+  block $__inlined_func$~lib/set/Set<u32>#find$1028
    loop $while-continue|0
     local.get $1
     if
@@ -6106,7 +6103,7 @@
       local.get $2
       i32.eq
      end
-     br_if $__inlined_func$~lib/set/Set<u32>#find$1029
+     br_if $__inlined_func$~lib/set/Set<u32>#find$1028
      local.get $4
      i32.const -2
      i32.and
@@ -6327,7 +6324,7 @@
    if
     local.get $7
     local.get $3
-    call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+    call $~lib/array/Array<u32>#__get
     local.set $2
     local.get $0
     i32.load offset=20
@@ -8404,7 +8401,7 @@
   call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#unpackSlot@override
   local.tee $1
   i32.const 0
-  call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+  call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
   local.get $2
   call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#eq@override
   i32.eqz
@@ -8938,7 +8935,7 @@
     local.get $1
     call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#unpackSlot@override
     i32.const 0
-    call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+    call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
     local.set $6
     local.get $5
     local.get $4
@@ -9014,7 +9011,7 @@
     call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#unpackSlot@override
     local.tee $1
     i32.const 0
-    call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+    call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
     local.get $6
     call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#eq@override
     i32.eqz
@@ -9151,7 +9148,7 @@
    local.get $1
    call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#unpackSlot@override
    local.set $1
-   block $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#zeroValue@override$829
+   block $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#zeroValue@override$828
     local.get $4
     i32.const 8
     i32.sub
@@ -9165,14 +9162,14 @@
      i64.const 0
      call $~lib/@btc-vision/as-bignum/assembly/integer/u256/u256#constructor
      local.set $5
-     br $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#zeroValue@override$829
+     br $__inlined_func$~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#zeroValue@override$828
     end
     unreachable
    end
    local.get $4
    local.get $1
    i32.const 0
-   call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+   call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
    local.get $5
    call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#eq@override
    i32.eqz
@@ -9445,7 +9442,7 @@
   call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#unpackSlot@override
   local.tee $3
   i32.const 0
-  call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+  call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
   local.get $4
   call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#eq@override
   i32.eqz
@@ -9894,7 +9891,7 @@
   local.get $1
   call $~lib/@btc-vision/btc-runtime/runtime/storage/arrays/StoredPackedArray/StoredPackedArray<~lib/@btc-vision/as-bignum/assembly/integer/u256/u256>#unpackSlot@override
   i32.const 0
-  call $~lib/array/Array<~lib/typedarray/Uint8Array>#__uget
+  call $~lib/array/Array<~lib/@btc-vision/btc-runtime/runtime/plugins/Plugin/Plugin>#__get
   local.set $0
   i32.const 32
   call $~lib/@btc-vision/btc-runtime/runtime/buffer/BytesWriter/BytesWriter#constructor

@@ -6,57 +6,32 @@
 
 import { getContract, JSONRpcProvider } from 'opnet';
 import type { Network } from '@btc-vision/bitcoin';
-import { networks } from '@btc-vision/bitcoin';
 import {
     BLOCKHOST_SUBSCRIPTIONS_ABI,
     type IBlockhostSubscriptions,
 } from '../fund-manager/contract-abis.js';
 import { isValidInternalAddress } from '../fund-manager/addressbook.js';
+import { loadWeb3Config } from '../fund-manager/web3-config.js';
 
 /**
- * Infer Bitcoin network from RPC URL.
- */
-function networkFromRpcUrl(rpcUrl: string): Network {
-    if (rpcUrl.includes('mainnet')) return networks.bitcoin;
-    if (rpcUrl.includes('testnet')) return networks.testnet;
-    return networks.regtest;
-}
-
-/**
- * Create an OPNet provider and BlockhostSubscriptions contract from env vars.
- *
- * Requires RPC_URL and BLOCKHOST_CONTRACT environment variables.
+ * Create an OPNet provider and BlockhostSubscriptions contract from
+ * web3-defaults.yaml configuration.
  */
 export function createProviderAndContract(): {
     provider: JSONRpcProvider;
     contract: IBlockhostSubscriptions;
     network: Network;
 } {
-    const rpcUrl = process.env['RPC_URL'];
-    const contractAddress = process.env['BLOCKHOST_CONTRACT'];
-
-    if (!rpcUrl) {
-        console.error('Error: RPC_URL environment variable not set');
-        process.exit(1);
-    }
-
-    if (!contractAddress) {
-        console.error(
-            'Error: BLOCKHOST_CONTRACT environment variable not set',
-        );
-        process.exit(1);
-    }
-
-    const network = networkFromRpcUrl(rpcUrl);
-    const provider = new JSONRpcProvider(rpcUrl, network);
+    const cfg = loadWeb3Config();
+    const provider = new JSONRpcProvider(cfg.rpcUrl, cfg.network);
     const contract = getContract<IBlockhostSubscriptions>(
-        contractAddress,
+        cfg.subscriptionsContract,
         BLOCKHOST_SUBSCRIPTIONS_ABI,
         provider,
-        network,
+        cfg.network,
     );
 
-    return { provider, contract, network };
+    return { provider, contract, network: cfg.network };
 }
 
 /**

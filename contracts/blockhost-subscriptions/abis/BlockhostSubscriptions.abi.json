@@ -333,6 +333,24 @@
                     "type": "UINT256"
                 }
             ]
+        },
+        {
+            "name": "getUserEncrypted",
+            "type": "Function",
+            "payable": false,
+            "onlyOwner": false,
+            "inputs": [
+                {
+                    "name": "subscriptionId",
+                    "type": "UINT256"
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "data",
+                    "type": "BYTES"
+                }
+            ]
         }
     ],
     "events": [
@@ -426,10 +444,6 @@
                 {
                     "name": "paidAmount",
                     "type": "UINT256"
-                },
-                {
-                    "name": "userEncrypted",
-                    "type": "BYTES"
                 }
             ],
             "type": "Event"

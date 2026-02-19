@@ -26,9 +26,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
-  "overrides": {
-    "@noble/hashes": "2.0.1"
-  },
+  "overrides": {},
   "engines": {
     "node": ">=24.0.0"
   }

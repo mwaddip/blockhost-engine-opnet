@@ -269,7 +269,7 @@ async function main() {
   console.log("");
   console.log("Next steps:");
   console.log("1. Create a subscription plan:");
-  console.log(`   npx hardhat run scripts/create-plan.ts --network sepolia`);
+  console.log(`   bw plan create "Basic" 100`);
   console.log("2. Generate the signup page:");
   console.log(`   blockhost-generate-signup --output /var/www/html/signup.html`);
   console.log("3. Start the monitor service:");

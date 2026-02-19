@@ -68,16 +68,8 @@ export async function planCommand(
         process.exit(1);
     }
 
-    const contractAddress = process.env['BLOCKHOST_CONTRACT'];
-    if (!contractAddress) {
-        console.error(
-            'Error: BLOCKHOST_CONTRACT environment variable not set',
-        );
-        process.exit(1);
-    }
-
     const signedContract = getContract<IBlockhostSubscriptions>(
-        contractAddress,
+        _contract.address,
         BLOCKHOST_SUBSCRIPTIONS_ABI,
         provider,
         network,

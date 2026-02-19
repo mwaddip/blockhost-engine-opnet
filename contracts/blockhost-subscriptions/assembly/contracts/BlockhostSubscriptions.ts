@@ -22,12 +22,42 @@ import {
     ReentrancyLevel,
 } from '@btc-vision/btc-runtime/runtime';
 
+const HEX_CHARS: string = '0123456789abcdef';
+
+function bytesToHex(data: Uint8Array): string {
+    let result: string = '';
+    for (let i: i32 = 0; i < data.length; i++) {
+        const b: u8 = data[i];
+        result += HEX_CHARS.charAt((b >> 4) & 0x0f);
+        result += HEX_CHARS.charAt(b & 0x0f);
+    }
+    return result;
+}
+
+function hexCharToNibble(c: i32): u8 {
+    if (c >= 48 && c <= 57) return <u8>(c - 48);       // '0'-'9'
+    if (c >= 97 && c <= 102) return <u8>(c - 97 + 10);  // 'a'-'f'
+    if (c >= 65 && c <= 70) return <u8>(c - 65 + 10);   // 'A'-'F'
+    return 0;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+    const len: i32 = hex.length / 2;
+    const result: Uint8Array = new Uint8Array(len);
+    for (let i: i32 = 0; i < len; i++) {
+        const hi: u8 = hexCharToNibble(hex.charCodeAt(i * 2));
+        const lo: u8 = hexCharToNibble(hex.charCodeAt(i * 2 + 1));
+        result[i] = (hi << 4) | lo;
+    }
+    return result;
+}
+
 const SECONDS_PER_DAY: u64 = 86400;
 const MAX_SUBSCRIPTION_DAYS: u256 = u256.fromU64(36500); // ~100 years
 
-const TRANSFER_FROM_SELECTOR: u32 = encodeSelector('transferFrom');
-const TRANSFER_SELECTOR: u32 = encodeSelector('transfer');
-const BALANCE_OF_SELECTOR: u32 = encodeSelector('balanceOf');
+const TRANSFER_FROM_SELECTOR: u32 = encodeSelector('transferFrom(address,address,uint256)');
+const TRANSFER_SELECTOR: u32 = encodeSelector('transfer(address,uint256)');
+const BALANCE_OF_SELECTOR: u32 = encodeSelector('balanceOf(address)');
 
 const paymentTokenPointer: u16 = Blockchain.nextPointer;
 const acceptingSubsPointer: u16 = Blockchain.nextPointer;
@@ -42,6 +72,7 @@ const subSubscriberPointer: u16 = Blockchain.nextPointer;
 const subExpiresAtPointer: u16 = Blockchain.nextPointer;
 const subCancelledPointer: u16 = Blockchain.nextPointer;
 const subscriberSubsPointer: u16 = Blockchain.nextPointer;
+const subUserEncryptedPointer: u16 = Blockchain.nextPointer;
 
 @final
 export class SubscriptionCreatedEvent extends NetEvent {
@@ -51,23 +82,19 @@ export class SubscriptionCreatedEvent extends NetEvent {
         subscriber: Address,
         expiresAt: u256,
         paidAmount: u256,
-        userEncrypted: Uint8Array,
     ) {
         const data: BytesWriter = new BytesWriter(
             U256_BYTE_LENGTH +
                 U256_BYTE_LENGTH +
                 ADDRESS_BYTE_LENGTH +
                 U256_BYTE_LENGTH +
-                U256_BYTE_LENGTH +
-                4 +
-                userEncrypted.length,
+                U256_BYTE_LENGTH,
         );
         data.writeU256(subscriptionId);
         data.writeU256(planId);
         data.writeAddress(subscriber);
         data.writeU256(expiresAt);
         data.writeU256(paidAmount);
-        data.writeBytesWithLength(userEncrypted);
         super('SubscriptionCreated', data);
     }
 }
@@ -195,16 +222,17 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
     }
 
     protected override isSelectorExcluded(selector: u32): boolean {
-        if (selector === encodeSelector('isAcceptingSubscriptions')) return true;
-        if (selector === encodeSelector('getPaymentToken')) return true;
-        if (selector === encodeSelector('getGracePeriod')) return true;
-        if (selector === encodeSelector('getPlan')) return true;
-        if (selector === encodeSelector('getSubscription')) return true;
-        if (selector === encodeSelector('isSubscriptionActive')) return true;
-        if (selector === encodeSelector('daysRemaining')) return true;
-        if (selector === encodeSelector('getSubscriptionsBySubscriber')) return true;
-        if (selector === encodeSelector('getTotalSubscriptionCount')) return true;
-        if (selector === encodeSelector('getTotalPlanCount')) return true;
+        if (selector === encodeSelector('isAcceptingSubscriptions()')) return true;
+        if (selector === encodeSelector('getPaymentToken()')) return true;
+        if (selector === encodeSelector('getGracePeriod()')) return true;
+        if (selector === encodeSelector('getPlan(uint256)')) return true;
+        if (selector === encodeSelector('getSubscription(uint256)')) return true;
+        if (selector === encodeSelector('isSubscriptionActive(uint256)')) return true;
+        if (selector === encodeSelector('daysRemaining(uint256)')) return true;
+        if (selector === encodeSelector('getSubscriptionsBySubscriber(address)')) return true;
+        if (selector === encodeSelector('getTotalSubscriptionCount()')) return true;
+        if (selector === encodeSelector('getTotalPlanCount()')) return true;
+        if (selector === encodeSelector('getUserEncrypted(uint256)')) return true;
 
         return super.isSelectorExcluded(selector);
     }
@@ -388,6 +416,10 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         subArray.push(subscriptionId);
         subArray.save();
 
+        // Store userEncrypted on-chain (too large for events, monitor reads via getUserEncrypted)
+        const encStore = new StoredString(subUserEncryptedPointer, subscriptionId.toU64());
+        encStore.value = bytesToHex(userEncrypted);
+
         this.nextSubId.value = SafeMath.add(subscriptionId, u256.One);
 
         this.emitEvent(
@@ -397,7 +429,6 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
                 subscriber,
                 expiresAt,
                 totalCost,
-                userEncrypted,
             ),
         );
 
@@ -619,6 +650,21 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         return writer;
     }
 
+    @method({ name: 'subscriptionId', type: ABIDataTypes.UINT256 })
+    @returns({ name: 'data', type: ABIDataTypes.BYTES })
+    public getUserEncrypted(calldata: Calldata): BytesWriter {
+        const subscriptionId: u256 = calldata.readU256();
+        this.requireValidSubscription(subscriptionId);
+
+        const encStore = new StoredString(subUserEncryptedPointer, subscriptionId.toU64());
+        const hex: string = encStore.value;
+        const data: Uint8Array = hexToBytes(hex);
+
+        const writer: BytesWriter = new BytesWriter(4 + data.length);
+        writer.writeBytesWithLength(data);
+        return writer;
+    }
+
     private getPaymentTokenAddress(): Address {
         const tokenU256: u256 = this.paymentTokenStore.value;
         if (tokenU256.isZero()) throw new Revert('Payment token not set');
@@ -688,7 +734,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
 
     private getSubscriberSubArray(subscriber: Address): StoredU256Array {
         if (!this.subscriberSubsCache.has(subscriber)) {
-            const array = new StoredU256Array(subscriberSubsPointer, subscriber);
+            const array = new StoredU256Array(subscriberSubsPointer, subscriber.slice(0, 30));
             this.subscriberSubsCache.set(subscriber, array);
         }
 

@@ -29,7 +29,6 @@ export type SubscriptionCreatedEvent = {
     readonly subscriber: Address;
     readonly expiresAt: bigint;
     readonly paidAmount: bigint;
-    readonly userEncrypted: Uint8Array;
 };
 export type SubscriptionExtendedEvent = {
     readonly subscriptionId: bigint;
@@ -204,6 +203,16 @@ export type GetTotalPlanCount = CallResult<
     OPNetEvent<never>[]
 >;
 
+/**
+ * @description Represents the result of the getUserEncrypted function call.
+ */
+export type GetUserEncrypted = CallResult<
+    {
+        data: Uint8Array;
+    },
+    OPNetEvent<never>[]
+>;
+
 // ------------------------------------------------------------------
 // IBlockhostSubscriptions
 // ------------------------------------------------------------------
@@ -227,4 +236,5 @@ export interface IBlockhostSubscriptions extends IOP_NETContract {
     getSubscriptionsBySubscriber(subscriber: Address): Promise<GetSubscriptionsBySubscriber>;
     getTotalSubscriptionCount(): Promise<GetTotalSubscriptionCount>;
     getTotalPlanCount(): Promise<GetTotalPlanCount>;
+    getUserEncrypted(subscriptionId: bigint): Promise<GetUserEncrypted>;
 }

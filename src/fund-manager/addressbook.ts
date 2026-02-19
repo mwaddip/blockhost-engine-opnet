@@ -17,8 +17,9 @@ import {
 } from '../root-agent/client.js';
 import type { Wallet } from '@btc-vision/transaction';
 
-const ADDRESSBOOK_PATH = '/etc/blockhost/addressbook.json';
-const HOT_KEY_PATH = '/etc/blockhost/hot.key';
+const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
+const ADDRESSBOOK_PATH = `${CONFIG_DIR}/addressbook.json`;
+const HOT_KEY_PATH = `${CONFIG_DIR}/hot.key`;
 
 /**
  * Validate a 0x-prefixed 32-byte (64 hex char) internal address.

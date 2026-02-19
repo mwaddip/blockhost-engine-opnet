@@ -16,81 +16,13 @@
  * Config from web3-defaults.yaml (rpc_url, nft_contract). No env vars or addressbook.
  */
 
-import * as fs from 'fs';
-import * as yaml from 'js-yaml';
 import { getContract, JSONRpcProvider } from 'opnet';
-import { networks, type Network } from '@btc-vision/bitcoin';
 import {
     ACCESS_CREDENTIAL_NFT_ABI,
     type IAccessCredentialNFT,
 } from '../fund-manager/contract-abis.js';
 import { isValidInternalAddress } from '../fund-manager/addressbook.js';
-
-const WEB3_DEFAULTS_PATH = '/etc/blockhost/web3-defaults.yaml';
-
-interface Web3Config {
-    nftContract: string;
-    rpcUrl: string;
-    network: Network;
-}
-
-function loadWeb3Config(): Web3Config {
-    if (!fs.existsSync(WEB3_DEFAULTS_PATH)) {
-        throw new Error(`Config not found: ${WEB3_DEFAULTS_PATH}`);
-    }
-
-    const raw = yaml.load(
-        fs.readFileSync(WEB3_DEFAULTS_PATH, 'utf8'),
-    ) as Record<string, unknown>;
-    const blockchain = raw['blockchain'] as
-        | Record<string, unknown>
-        | undefined;
-
-    const nftContract = blockchain?.['nft_contract'] as string | undefined;
-    if (!nftContract || !isValidInternalAddress(nftContract)) {
-        throw new Error(
-            'blockchain.nft_contract not set or invalid in web3-defaults.yaml',
-        );
-    }
-
-    const rpcUrl = blockchain?.['rpc_url'] as string | undefined;
-    if (!rpcUrl) {
-        throw new Error(
-            'blockchain.rpc_url not set in web3-defaults.yaml',
-        );
-    }
-
-    const network = inferNetwork(rpcUrl);
-    return { nftContract, rpcUrl, network };
-}
-
-function loadRpcUrl(): { rpcUrl: string; network: Network } {
-    if (!fs.existsSync(WEB3_DEFAULTS_PATH)) {
-        throw new Error(`Config not found: ${WEB3_DEFAULTS_PATH}`);
-    }
-
-    const raw = yaml.load(
-        fs.readFileSync(WEB3_DEFAULTS_PATH, 'utf8'),
-    ) as Record<string, unknown>;
-    const blockchain = raw['blockchain'] as
-        | Record<string, unknown>
-        | undefined;
-
-    const rpcUrl = blockchain?.['rpc_url'] as string | undefined;
-    if (!rpcUrl) {
-        throw new Error(
-            'blockchain.rpc_url not set in web3-defaults.yaml',
-        );
-    }
-
-    return { rpcUrl, network: inferNetwork(rpcUrl) };
-}
-
-function inferNetwork(rpcUrl: string): Network {
-    if (rpcUrl.includes('mainnet')) return networks.bitcoin;
-    if (rpcUrl.includes('testnet')) return networks.testnet;
-    return networks.regtest;
-}
+import { loadWeb3Config, loadRpcConfig } from '../fund-manager/web3-config.js';
 
 function isAddress(arg: string): boolean {
     return isValidInternalAddress(arg);
@@ -131,7 +63,7 @@ async function main(): Promise<void> {
             console.error('Usage: is contract <address>');
             process.exit(1);
         }
-        const { rpcUrl, network } = loadRpcUrl();
+        const { rpcUrl, network } = loadRpcConfig();
         const provider = new JSONRpcProvider(rpcUrl, network);
         try {
             const info = await provider.getPublicKeyInfo(other[0], true);
