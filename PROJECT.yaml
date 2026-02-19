@@ -2,60 +2,71 @@
 # This file enables other Claude sessions to import this project as a submodule
 # and understand how to interact with it without reading the entire codebase.
 
-name: blockhost-engine
+name: blockhost-engine-opnet
 version: "1.0.0"
 description: |
-  Blockchain-based VM hosting subscription system. Users purchase subscriptions
-  on-chain, which triggers automatic VM provisioning with NFT-based SSH authentication.
+  Blockchain-based VM hosting subscription system on OPNet (Bitcoin L1).
+  Users purchase subscriptions on-chain, which triggers automatic VM provisioning
+  with NFT-based SSH authentication.
 
 # Project components
 components:
   smart_contract:
     name: BlockhostSubscriptions
-    language: solidity
-    path: contracts/BlockhostSubscriptions.sol
+    language: assemblyscript
+    path: contracts/blockhost-subscriptions/
     description: |
-      EVM contract handling subscription purchases, extensions, and cancellations.
-      Emits events that the monitor service watches to trigger VM provisioning.
+      OPNet AssemblyScript contract (compiled to WASM) handling subscription purchases,
+      extensions, and cancellations on Bitcoin L1. Emits events that the monitor service
+      watches to trigger VM provisioning.
 
     key_events:
       - name: SubscriptionCreated
-        fields: [subscriptionId, planId, subscriber, expiresAt, paidAmount, paymentToken, userEncrypted]
-        triggers: VM provisioning via blockhost-provisioner-proxmox
+        fields: [subscriptionId, planId, subscriber, expiresAt, paidAmount]
+        triggers: NFT token ID reservation, VM provisioning, NFT minting
       - name: SubscriptionExtended
-        fields: [subscriptionId, planId, extendedBy, newExpiresAt, paidAmount, paymentToken]
+        fields: [subscriptionId, planId, extendedBy, newExpiresAt, paidAmount]
         triggers: Update VM expiry in database
       - name: SubscriptionCancelled
         fields: [subscriptionId, planId, subscriber]
         triggers: VM destruction
 
+  nft_contract:
+    name: AccessCredentialNFT
+    language: assemblyscript
+    path: contracts/access-credential-nft/
+    description: |
+      OPNet AssemblyScript NFT contract for VM access credentials.
+      2-param mint(to, userEncrypted). Engine owns the full NFT lifecycle:
+      token ID reservation (totalSupply query), encryption, minting.
+
   monitor:
     language: typescript
     entry_point: src/monitor/index.ts
     description: |
-      Polls blockchain for contract events and dispatches to handlers.
-      Handlers call blockhost-provisioner-proxmox scripts to provision/manage VMs.
+      Polls OPNet blockchain for contract events and dispatches to handlers.
+      Handlers call provisioner scripts to create/manage VMs and mint NFTs.
       Also processes admin commands and runs periodic NFT reconciliation.
 
     handlers:
       - event: SubscriptionCreated
-        action: Calls vm-generator.py to create VM and mint NFT
+        action: Reserves NFT token ID, creates VM via provisioner, encrypts connection details, mints NFT
       - event: SubscriptionExtended
-        action: Updates VM expiry in database
+        action: Updates VM expiry in database, resumes suspended VMs
       - event: SubscriptionCancelled
-        action: Destroys VM via Terraform
+        action: Destroys VM via provisioner
 
     features:
-      - admin_commands: Processes ECIES-encrypted commands from admin wallet
-      - nft_reconciliation: Periodic check (5 min) to sync local NFT state with chain
+      - admin_commands: Processes HMAC-authenticated OP_RETURN commands from admin wallet
+      - nft_reconciliation: Periodic check (5 min) to sync local NFT state with chain, detect ownership transfers, update VM GECOS
 
   admin_commands:
     language: typescript
     path: src/admin/
     description: |
-      On-chain admin command infrastructure. Admin sends ECIES-encrypted
-      commands as transaction data from a configured wallet. Commands are
-      decrypted, validated (timestamp, nonce anti-replay), and dispatched.
+      On-chain admin command infrastructure. Admin sends HMAC-authenticated
+      OP_RETURN commands from a configured wallet. Commands are validated
+      (timestamp, nonce anti-replay) and dispatched.
 
     config_files:
       - /etc/blockhost/blockhost.yaml (admin.wallet_address, admin.destination_mode)
@@ -71,14 +82,15 @@ components:
       Periodic NFT reconciliation to fix state drift from partial failures.
       Compares on-chain totalSupply() with local reserved_nft_tokens map
       and marks tokens as minted if they exist on-chain but not locally.
+      Detects NFT ownership transfers and updates VM GECOS fields.
 
   signup_page:
-    path: scripts/generate-signup-page.py
+    path: scripts/generate-signup-page
     template: scripts/signup-template.html
     description: |
-      Generates static HTML signup page that connects to user's wallet,
-      has them sign a message (for encrypted connection details), and
-      submits the buySubscription transaction.
+      Generates static HTML signup page that connects to OPWallet,
+      has users sign a message (for encrypted connection details), and
+      submits the buySubscription transaction via OPNet.
 
   server_init:
     path: scripts/init-server.sh
@@ -101,25 +113,23 @@ dependencies:
     description: |
       VM provisioning scripts for Proxmox. Creates VMs with cloud-init
       configured for NFT-based web3 SSH authentication.
+      Receives --owner-wallet and --nft-token-id from the engine.
       Installed as a separate .deb package.
 
   libpam-web3-tools:
     package: libpam-web3-tools
     version: ">= 0.5.0"
     description: |
-      Provides AccessCredentialNFT contract source and ABI for deployment,
-      plus signing page generator for per-NFT authentication pages.
-      Contract at: /usr/share/libpam-web3-tools/contracts/
+      Provides signing page generator for per-NFT authentication pages.
       Signing page generator at: /usr/share/libpam-web3-tools/signing-page/
 
 # Environment setup
 environment:
-  shared_env_file: ~/projects/sharedenv/blockhost.env
+  shared_env_file: ~/projects/sharedenv/opnet-regtest.env
   required_variables:
-    - DEPLOYER_PRIVATE_KEY  # Wallet for deploying contracts and minting NFTs
-    - BLOCKHOST_CONTRACT    # Deployed subscription contract address
-    - NFT_CONTRACT          # Deployed NFT contract address (same as above currently)
-    - RPC_URL               # Ethereum RPC endpoint
+    - OPNET_MNEMONIC            # BIP39 mnemonic for deployer wallet
+    - OPNET_NFT_CONTRACT        # Deployed NFT contract address (0x + 64 hex)
+    - OPNET_SUBSCRIPTIONS_CONTRACT  # Deployed subscription contract address
 
 # CLI commands
 commands:
@@ -127,28 +137,20 @@ commands:
     command: npm install
     description: Install Node.js dependencies
 
-  compile:
-    command: npm run compile
-    description: Compile Solidity contracts
+  typecheck:
+    command: npx tsc --noEmit
+    description: Type-check TypeScript
 
-  test:
-    command: npm test
-    description: Run contract tests
-
-  deploy_local:
-    command: npm run deploy:local
-    description: Deploy to local Hardhat node
-
-  deploy_sepolia:
-    command: source ~/projects/sharedenv/blockhost.env && npm run deploy:sepolia
-    description: Deploy to Sepolia testnet
+  build_contracts:
+    command: npx asc src/index.ts --config asconfig.json
+    description: Compile AssemblyScript contracts to WASM (run from contract directory)
 
   monitor:
-    command: source ~/projects/sharedenv/blockhost.env && npm run monitor
+    command: npm run monitor
     description: Start the blockchain event monitor
 
   generate_signup:
-    command: python3 scripts/generate-signup-page.py --output signup.html
+    command: python3 scripts/generate-signup-page --output signup.html
     description: Generate signup page HTML
 
   init_server:
@@ -158,21 +160,24 @@ commands:
 # Deployment architecture
 deployment:
   blockchain:
-    network: Sepolia (testnet) or Ethereum mainnet
+    network: OPNet regtest or mainnet (Bitcoin L1)
     contracts:
-      - BlockhostSubscriptions (handles subscriptions + NFT minting)
+      - BlockhostSubscriptions (subscription management, payment token)
+      - AccessCredentialNFT (VM access credentials, 2-param mint)
 
   server:
     components:
-      - blockhost-monitor (systemd service watching blockchain)
+      - blockhost-monitor (systemd service watching OPNet blockchain)
     requires:
       - blockhost-common (config directories and Python modules)
       - blockhost-provisioner-proxmox (VM provisioning scripts)
 
     config_files:
       - /etc/blockhost/blockhost.yaml (server keypair, public secret, admin wallet)
-      - /etc/blockhost/web3-defaults.yaml (blockchain config)
+      - /etc/blockhost/web3-defaults.yaml (blockchain config: RPC URL, contract addresses)
       - /etc/blockhost/admin-commands.json (admin command definitions)
+      - /etc/blockhost/addressbook.json (role-to-wallet mapping)
+      - /etc/blockhost/revenue-share.json (revenue sharing config)
       - /var/lib/blockhost/vms.json (VM database with reserved_nft_tokens)
 
   vm:
@@ -184,33 +189,34 @@ deployment:
 # Flow diagram
 workflow: |
   1. User visits signup page (static HTML)
-  2. User connects wallet, signs message, submits buySubscription tx
+  2. User connects OPWallet, signs message, submits buySubscription tx
   3. Contract emits SubscriptionCreated event with userEncrypted payload
-  4. Monitor detects event, calls vm-generator.py
-  5. vm-generator.py:
-     a. Allocates VMID and IP from database
-     b. Reserves NFT token ID
-     c. Generates Terraform config with cloud-init
-     d. Runs terraform apply to create VM
-     e. Mints NFT to user with embedded signing page
-  6. VM boots with web3-only SSH authentication
-  7. User visits VM:8443 (signing page served by web3-auth-svc over HTTPS)
-  8. User signs with wallet → gets OTP
-  9. User SSHs to VM, enters OTP → authenticated
+  4. Monitor detects event, handler:
+     a. Queries totalSupply() on NFT contract → reserves token ID in DB
+     b. Calls provisioner create with --owner-wallet and --nft-token-id
+     c. Provisioner creates VM with GECOS set to wallet=ADDRESS,nft=TOKEN_ID
+     d. Handler encrypts connection details with user's signature
+     e. Mints NFT to user with encrypted connection details
+  5. VM boots with web3-only SSH authentication
+  6. User visits VM:8443 (signing page served by web3-auth-svc over HTTPS)
+  7. User signs with wallet → gets OTP
+  8. User SSHs to VM, enters OTP → authenticated
 
 # Integration notes
 integration:
   setup_steps:
     - Install blockhost-common (provides config directories and Python modules)
     - Install blockhost-provisioner-proxmox (provides VM provisioning scripts)
-    - Install blockhost-engine
+    - Install blockhost-engine-opnet
     - Run blockhost-init to generate server keypair and config
-    - Deploy contract: npm run deploy:sepolia (or use deployed address)
-    - Update nft_contract in /etc/blockhost/web3-defaults.yaml
-    - Fund deployer wallet with ETH for gas
-    - Start monitor: systemctl enable --now blockhost-monitor
+    - Deploy contracts (blockhost-deploy-contracts both)
+    - Update web3-defaults.yaml with contract addresses and RPC URL
+    - Fund deployer wallet with BTC for gas
+    - Start monitor (systemctl enable --now blockhost-monitor)
 
   vm_provisioning:
     description: |
-      The monitor calls vm-generator.py from the blockhost-provisioner-proxmox package.
+      The monitor calls provisioner create from the blockhost-provisioner-proxmox package.
       Scripts are installed at /usr/lib/blockhost-provisioner-proxmox/scripts/
+      The provisioner receives --owner-wallet and --nft-token-id from the engine,
+      bakes them into cloud-init GECOS, and returns a JSON summary.

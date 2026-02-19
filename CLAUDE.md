@@ -49,7 +49,7 @@ blockhost-engine is the core component of a hosting subscription management syst
 5. **bw CLI** (TypeScript) - Scriptable wallet operations (`bw send`, `bw balance`, `bw withdraw`, `bw swap`, `bw split`, `bw who`, `bw config`, `bw plan`, `bw set`)
 6. **ab CLI** (TypeScript) - Addressbook management (`ab add`, `ab del`, `ab up`, `ab new`, `ab list`, `ab --init`)
 7. **is CLI** (TypeScript) - Identity predicate (`is <wallet> <nft_id>`, `is <signature> <wallet>`, `is contract <address>`)
-8. **NFT Minting** (Python) - `blockhost-mint-nft` CLI, mints access credential NFTs on OPNet
+8. **NFT Minting** (TypeScript) - `blockhost-mint-nft` CLI, mints access credential NFTs on OPNet (2-param: `--owner-wallet`, `--user-encrypted`)
 9. **Root Agent Client** (TypeScript) - Privilege separation client for the root agent daemon (iptables, key writes, addressbook saves)
 10. **Contract Deployer** (Bash) - `blockhost-deploy-contracts` script for production contract deployment
 11. **Installer Wizard Plugin** (Python) - `blockhost/engine_opnet/wizard.py`, provides the blockchain configuration wizard page, API routes, and finalization steps to the installer
@@ -80,7 +80,7 @@ blockhost-engine-opnet/
 │   ├── deploy-contracts.sh  # Production contract deployer (installed as blockhost-deploy-contracts)
 ├── src/                 # TypeScript server source
 │   ├── monitor/         # Contract event polling & OPNet block scanning
-│   ├── handlers/        # Event handlers (provisioner dispatch + NFT minting)
+│   ├── handlers/        # Event handlers (NFT reservation, provisioner dispatch, NFT minting)
 │   ├── admin/           # On-chain admin commands (HMAC OP_RETURN, anti-replay)
 │   ├── reconcile/       # Periodic NFT state reconciliation
 │   ├── fund-manager/    # Automated fund withdrawal, distribution & gas management

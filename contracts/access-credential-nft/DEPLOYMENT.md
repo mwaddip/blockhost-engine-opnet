@@ -47,7 +47,7 @@ After deployment, update `~/projects/sharedenv/opnet-regtest.env` with the new c
 ## Verify
 
 ```bash
-npx tsx query.ts    # balanceOf, tokenOfOwnerByIndex, getAccessData, ownerOf
+npx tsx query.ts    # balanceOf, tokenOfOwnerByIndex, getUserEncrypted, ownerOf
 npx tsx check.ts    # TX receipts and block confirmation
 ```
 
@@ -120,7 +120,7 @@ Missing any of these causes cryptic errors. An empty abort function causes `"Can
 
 The full OP721 with all its storage maps, arrays, approval systems, and signature verification consumes more than 20M gas during initialization. This is a protocol-level cap that cannot be increased by the deployer (`gasSatFee` only affects execution gas, not the init limit).
 
-The solution was to extend `OP_NET` directly and implement only the methods opnet-auth-svc needs: `mint`, `balanceOf`, `tokenOfOwnerByIndex`, `ownerOf`, `getAccessData`.
+The solution was to extend `OP_NET` directly and implement only the methods opnet-auth-svc needs: `mint`, `balanceOf`, `tokenOfOwnerByIndex`, `ownerOf`, `getUserEncrypted`.
 
 ### 4. tsconfig.json extends path
 
@@ -170,11 +170,11 @@ OPNet uses the first 4 bytes of SHA256 of the method signature. The build output
 
 | Method | Selector |
 |--------|----------|
-| `mint(address,string,string)` | `0xa89ce876` |
+| `mint(address,string)` | `0xa89ce876` |
 | `balanceOf(address)` | `0x5b46f8f6` |
 | `tokenOfOwnerByIndex(address,uint256)` | `0x489f3960` |
 | `ownerOf(uint256)` | `0x06f6d69b` |
-| `getAccessData(uint256)` | `0x77c265de` |
+| `getUserEncrypted(uint256)` | `0x62e7bebe` |
 
 ### 8. btc_call response format
 

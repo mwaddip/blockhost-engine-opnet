@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     console.log('Deployer:', wallet.p2tr);
     console.log('Contract:', CONTRACT);
 
-    // Build mint calldata: mint(to: ADDRESS, userEncrypted: STRING, publicSecret: STRING)
+    // Build mint calldata: mint(to: ADDRESS, userEncrypted: STRING)
     // Mint to ourselves (the deployer)
     const calldata = new BinaryWriter();
 
@@ -64,9 +64,6 @@ async function main(): Promise<void> {
 
     // userEncrypted (STRING) - test data
     calldata.writeStringWithLength('test-encrypted-data');
-
-    // publicSecret (STRING) - test data
-    calldata.writeStringWithLength('test-public-secret');
 
     // Get UTXOs
     const utxos = await provider.utxoManager.getUTXOs({
