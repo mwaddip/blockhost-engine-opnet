@@ -1,124 +1,75 @@
 /**
- * Gas token monitoring and USDC→ETH swap
+ * Gas (BTC) monitoring (OPNet)
  *
- * Periodically checks the server wallet's ETH balance.
- * If below threshold, swaps stablecoin for ETH via bw swap.
+ * On OPNet, "gas" is BTC satoshis used for transaction fees.
+ * Periodically checks the server wallet's BTC balance and, if low,
+ * swaps stablecoin for BTC via NativeSwap (OP20 → BTC).
+ *
+ * Uses bw executeBalance() for queries and bw executeSwap() for swaps.
  */
 
-import { ethers } from "ethers";
+import type { JSONRpcProvider } from "opnet";
+import type { Network } from "@btc-vision/bitcoin";
 import type { Addressbook, FundManagerConfig } from "./types";
-import { getChainConfig, UNISWAP_V2_PAIR_ABI } from "./chain-pools";
-import { getTokenBalance } from "./token-utils";
+import type { IBlockhostSubscriptions } from "./contract-abis";
+import { executeBalance } from "../bw/commands/balance";
 import { executeSwap } from "../bw/commands/swap";
+import { formatBtc } from "../bw/cli-utils";
+import { formatUnits } from "./token-utils";
 
 /**
- * Get ETH price in USD from a Uniswap V2 WETH/USDC pair
- */
-async function getEthPriceUsd(
-  pairAddress: string,
-  wethAddress: string,
-  usdcDecimals: number,
-  provider: ethers.Provider
-): Promise<number> {
-  const pair = new ethers.Contract(pairAddress, UNISWAP_V2_PAIR_ABI, provider);
-
-  const [reserve0, reserve1] = await pair.getReserves();
-  const token0: string = await pair.token0();
-
-  let wethReserve: bigint;
-  let usdcReserve: bigint;
-
-  if (token0.toLowerCase() === wethAddress.toLowerCase()) {
-    wethReserve = reserve0;
-    usdcReserve = reserve1;
-  } else {
-    wethReserve = reserve1;
-    usdcReserve = reserve0;
-  }
-
-  const usdcFloat = parseFloat(ethers.formatUnits(usdcReserve, usdcDecimals));
-  const wethFloat = parseFloat(ethers.formatEther(wethReserve));
-  return usdcFloat / wethFloat;
-}
-
-/**
- * Check server wallet gas and swap USDC→ETH if needed.
+ * Check server wallet BTC balance and swap stablecoin for BTC if low.
+ *
+ * Uses NativeSwap's listLiquidity (OP20 → BTC) via bw executeSwap().
+ * The swap is asynchronous — tokens are listed for sale and BTC arrives
+ * when a buyer fills the listing. This is acceptable for automated gas
+ * management since it's not time-critical.
  */
 export async function checkAndSwapGas(
   book: Addressbook,
   config: FundManagerConfig,
-  provider: ethers.Provider,
-  contract: ethers.Contract
+  provider: JSONRpcProvider,
+  contract: IBlockhostSubscriptions,
+  network: Network,
 ): Promise<void> {
-  const serverAddress = book.server?.address;
-  if (!serverAddress || !book.server?.keyfile) {
+  if (!book.server?.address || !book.server?.keyfile) {
     console.error("[GAS] Cannot check gas: server wallet not available");
     return;
   }
 
-  // Get network chain ID
-  const network = await provider.getNetwork();
-  const chainConfig = getChainConfig(network.chainId);
-  if (!chainConfig) {
-    console.error(`[GAS] No chain configuration for chainId ${network.chainId}`);
+  const serverBal = await executeBalance("server", undefined, book, provider, contract, network);
+
+  if (serverBal.btcBalance >= config.gas_low_threshold_sats) {
+    return; // Gas sufficient
+  }
+
+  console.warn(
+    `[GAS] Server BTC low: ${formatBtc(serverBal.btcBalance)}, threshold: ${formatBtc(config.gas_low_threshold_sats)}`
+  );
+
+  // Check if server has stablecoin to swap
+  const stableBal = await executeBalance("server", "stable", book, provider, contract, network);
+  if (stableBal.tokenBalance === undefined || stableBal.tokenBalance === 0n) {
+    console.warn("[GAS] No stablecoin available for swap — top up server wallet manually");
     return;
   }
 
-  if (
-    chainConfig.usdc_weth_pair === ethers.ZeroAddress ||
-    chainConfig.usdc_weth_pair === "0x0000000000000000000000000000000000000000"
-  ) {
-    return; // No pair configured (e.g., testnet)
+  // Determine swap amount: use configured gas_swap_amount_sats worth,
+  // but cap at available stablecoin balance
+  const swapAmount = stableBal.tokenBalance < config.gas_swap_amount_sats
+    ? stableBal.tokenBalance
+    : config.gas_swap_amount_sats;
+
+  const decimals = stableBal.tokenDecimals ?? 8;
+  const amountStr = formatUnits(swapAmount, decimals);
+
+  console.log(`[GAS] Swapping ${amountStr} ${stableBal.tokenSymbol ?? 'stable'} → BTC via NativeSwap`);
+
+  try {
+    await executeSwap(amountStr, "stable", "btc", "server", book, provider, contract, network);
+    console.log("[GAS] Swap listed on NativeSwap — BTC will arrive as listing is filled");
+  } catch (err) {
+    console.error(`[GAS] Swap failed: ${err}`);
+    console.warn("[GAS] Top up server BTC manually");
   }
-
-  // Check server ETH balance
-  const ethBalance = await provider.getBalance(serverAddress);
-
-  // Get ETH price to determine USD value
-  const { decimals: usdcDecimals, balance: usdcBalance } = await getTokenBalance(
-    chainConfig.usdc,
-    serverAddress,
-    provider
-  );
-  const ethPriceUsd = await getEthPriceUsd(
-    chainConfig.usdc_weth_pair,
-    chainConfig.weth,
-    usdcDecimals,
-    provider
-  );
-
-  const ethBalanceFloat = parseFloat(ethers.formatEther(ethBalance));
-  const ethBalanceUsd = ethBalanceFloat * ethPriceUsd;
-
-  if (ethBalanceUsd >= config.gas_low_threshold_usd) {
-    return; // Gas is sufficient
-  }
-
-  console.log(
-    `[GAS] Server ETH low: ${ethBalanceFloat.toFixed(4)} ETH (~$${ethBalanceUsd.toFixed(2)}), threshold: $${config.gas_low_threshold_usd}`
-  );
-
-  // Check server has enough USDC
-  const swapAmountUsdc = ethers.parseUnits(config.gas_swap_amount_usd.toString(), usdcDecimals);
-  if (usdcBalance < swapAmountUsdc) {
-    console.warn(
-      `[GAS] Server USDC insufficient for gas swap: ${ethers.formatUnits(usdcBalance, usdcDecimals)} < ${config.gas_swap_amount_usd}`
-    );
-    return;
-  }
-
-  console.log(`[GAS] Swapping $${config.gas_swap_amount_usd} USDC for ETH...`);
-  const txHash = await executeSwap(
-    config.gas_swap_amount_usd.toString(),
-    "stable",
-    "server",
-    book,
-    provider,
-    contract
-  );
-
-  const newBalance = await provider.getBalance(serverAddress);
-  console.log(
-    `[GAS] Swapped $${config.gas_swap_amount_usd} USDC for ETH. New balance: ${ethers.formatEther(newBalance)} ETH (tx: ${txHash})`
-  );
 }

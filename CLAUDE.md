@@ -42,17 +42,17 @@ These stats override your default attention distribution. High stats (8+) mean o
 
 blockhost-engine is the core component of a hosting subscription management system. It consists of:
 
-1. **EVM Smart Contract** (Solidity) - Handles subscription purchases and extensions on-chain
+1. **OPNet Smart Contract** (AssemblyScript) - Handles subscription purchases and extensions on Bitcoin L1
 2. **Monitor Server** (TypeScript) - Watches the smart contract for events and triggers actions
 3. **Maintenance Scheduler** - Manages subscription lifecycle (suspend/destroy expired subscriptions)
 4. **Fund Manager** (TypeScript) - Automated fund withdrawal, revenue sharing, and gas management
 5. **bw CLI** (TypeScript) - Scriptable wallet operations (`bw send`, `bw balance`, `bw withdraw`, `bw swap`, `bw split`, `bw who`, `bw config`, `bw plan`, `bw set`)
 6. **ab CLI** (TypeScript) - Addressbook management (`ab add`, `ab del`, `ab up`, `ab new`, `ab list`, `ab --init`)
 7. **is CLI** (TypeScript) - Identity predicate (`is <wallet> <nft_id>`, `is <signature> <wallet>`, `is contract <address>`)
-8. **NFT Minting** (Python) - `blockhost-mint-nft` CLI, mints access credential NFTs via Foundry's `cast`
+8. **NFT Minting** (Python) - `blockhost-mint-nft` CLI, mints access credential NFTs on OPNet
 9. **Root Agent Client** (TypeScript) - Privilege separation client for the root agent daemon (iptables, key writes, addressbook saves)
 10. **Contract Deployer** (Bash) - `blockhost-deploy-contracts` script for production contract deployment
-11. **Installer Wizard Plugin** (Python) - `blockhost/engine_evm/wizard.py`, provides the blockchain configuration wizard page, API routes, and finalization steps to the installer
+11. **Installer Wizard Plugin** (Python) - `blockhost/engine_opnet/wizard.py`, provides the blockchain configuration wizard page, API routes, and finalization steps to the installer
 12. **Engine Manifest** (`engine.json`) - Declares engine identity, wizard plugin, finalization steps, and `constraints` (chain-specific format patterns for input validation by installer/admin panel)
 13. **Auth Service** (TypeScript→binary) - `web3-auth-svc`, HTTPS signing server compiled to standalone binary via `bun build --compile`. Ships as a template package for VMs.
 
@@ -63,44 +63,28 @@ Shared configuration is provided by `blockhost-common`.
 
 ```bash
 npm install              # Install dependencies
-npm run compile          # Compile Solidity contracts
-npm test                 # Run tests
-npm run test:coverage    # Run tests with coverage
-npm run node             # Start local Hardhat node
-npm run deploy:local     # Deploy to local node
-npm run deploy:sepolia   # Deploy to Sepolia testnet
+npx tsc --noEmit         # Type-check TypeScript
 npm run monitor          # Run event monitor
-npm run clean            # Clean build artifacts
-```
-
-## Environment Setup
-
-Source the shared environment file before running deploy or monitor:
-```bash
-source ~/projects/sharedenv/blockhost.env
 ```
 
 ## Architecture
 
 ```
-blockhost-engine/
-├── blockhost/engine_evm/ # Installer wizard plugin (Python)
-│   ├── wizard.py         # Blueprint, API routes, finalization steps
-│   └── templates/engine_evm/  # blockchain.html, summary_section.html
+blockhost-engine-opnet/
+├── blockhost/engine_opnet/ # Installer wizard plugin (Python)
+│   ├── wizard.py           # Blueprint, API routes, finalization steps
+│   └── templates/engine_opnet/  # blockchain.html, summary_section.html
 ├── engine.json           # Engine manifest (discovered by installer at /usr/share/blockhost/)
-├── contracts/           # Solidity smart contracts
-│   ├── BlockhostSubscriptions.sol  # Main subscription contract
-│   └── mocks/           # Mock contracts for testing
 ├── scripts/             # Deployment, minting, and utility scripts
 │   ├── mint_nft.py      # NFT minting (installed as blockhost-mint-nft)
 │   ├── deploy-contracts.sh  # Production contract deployer (installed as blockhost-deploy-contracts)
-├── test/                # Contract tests
 ├── src/                 # TypeScript server source
-│   ├── monitor/         # Contract event polling & processing
+│   ├── monitor/         # Contract event polling & OPNet block scanning
 │   ├── handlers/        # Event handlers (provisioner dispatch + NFT minting)
-│   ├── admin/           # On-chain admin commands (ECIES-encrypted, anti-replay)
+│   ├── admin/           # On-chain admin commands (HMAC OP_RETURN, anti-replay)
 │   ├── reconcile/       # Periodic NFT state reconciliation
 │   ├── fund-manager/    # Automated fund withdrawal, distribution & gas management
+│   ├── crypto.ts        # Native ECIES decrypt + SHAKE256 symmetric encrypt (replaces pam_web3_tool)
 │   ├── bw/              # blockwallet CLI (send, balance, withdraw, swap, split, who, config, plan, set)
 │   ├── ab/              # addressbook CLI (add, del, up, new, list, --init)
 │   ├── is/              # identity predicate CLI (NFT ownership, signature, contract checks)
@@ -115,45 +99,51 @@ blockhost-engine/
 
 VMs are named based on subscription ID: `blockhost-001`, `blockhost-042`, etc. (3-digit zero-padded).
 
-## Smart Contract (BlockhostSubscriptions.sol)
+## Smart Contract (OPNet AssemblyScript)
+
+BlockhostSubscriptions is an OPNet smart contract (AssemblyScript → WASM) deployed on Bitcoin L1.
 
 ### Key Concepts
 
 - **Plans**: Subscription tiers with USD-denominated pricing (in cents per day)
 - **Subscriptions**: User subscriptions with expiration timestamps
-- **Payment Methods**: Accepted ERC20 tokens with Chainlink price feeds for USD conversion
-
-### Payment Methods
-
-**Primary Stablecoin (ID 1)**: Direct USD payment, no conversion needed
-- Set via `setPrimaryStablecoin(address)`
-- Simple calculation: `amount = priceUsdCents * days * 10^decimals / 100`
-- No slippage, no liquidity requirements
-
-**Other Tokens (ID 2+)**: Price derived from Uniswap V2 pairs
-- Added via `addPaymentMethod(tokenAddress, pairAddress, stablecoinAddress)`
-- Uses constant product formula: `tokenAmount = (totalUsdCost * tokenReserve) / stablecoinReserve`
-- 1% slippage buffer (configurable)
-- $10k minimum liquidity requirement (configurable)
+- **Payment Token**: Single OP_20 stablecoin configured via `setPaymentToken()`
 
 ### Events (for server monitoring)
 
 - `PlanCreated`, `PlanUpdated` - Plan lifecycle
 - `SubscriptionCreated`, `SubscriptionExtended`, `SubscriptionCancelled` - Subscription lifecycle
-- `PaymentMethodAdded`, `PaymentMethodUpdated` - Payment configuration
+- `AcceptingSubscriptionsChanged` - Admin toggle
 
 ### Server Helper Functions
 
 - `getSubscriptionsBySubscriber(address)` - User subscription lookup
 - `isSubscriptionActive(subscriptionId)` - Quick status check
+- `getPaymentToken()` - Current payment token address
+- `withdrawFunds(token, amount, to)` - Owner withdrawal
 
-### Security Features
+### Contract ABIs
 
-- ReentrancyGuard on payment functions
-- Minimum liquidity requirement for Uniswap pairs (configurable, default $10k)
-- SafeERC20 for token transfers
-- Owner-only administrative functions
-- Slippage buffer on payments (configurable, default 1%)
+OPNet ABIs are defined in `src/fund-manager/contract-abis.ts`:
+- `BLOCKHOST_SUBSCRIPTIONS_ABI` / `IBlockhostSubscriptions` — subscription contract
+- `ACCESS_CREDENTIAL_NFT_ABI` / `IAccessCredentialNFT` — NFT contract
+
+### Blockchain Interaction
+
+The engine uses the `opnet` package (NOT ethers.js) for all blockchain interaction:
+- `JSONRpcProvider` for RPC queries
+- `getContract<T>()` for typed contract instances
+- Block scanning via `provider.getBlock()` + transaction iteration
+- Event decoding from `tx.events` / `tx.receipt.events`
+- Balance queries: `provider.getBalance(address, true)` returns `bigint` (satoshis)
+
+### Crypto Module (`src/crypto.ts`)
+
+Native crypto replacing `pam_web3_tool` CLI:
+- `eciesDecrypt()` — secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM. Wire: `ephemeralPub(65) + IV(12) + ciphertext+tag`
+- `symmetricEncrypt()` — SHAKE256 key derivation + AES-256-GCM. Wire: `IV(12) + ciphertext+tag`
+- `loadServerPrivateKey()` — reads `/etc/blockhost/server.key`
+- Uses `@noble/curves/secp256k1`, `@noble/hashes` (sha256, sha3, hkdf), `node:crypto`
 
 ## Reconciler (`src/reconcile/`)
 
@@ -190,16 +180,17 @@ Integrated into the monitor polling loop. Runs two periodic tasks:
 
 ### Fund Cycle (every 24h, configurable)
 
-1. **Withdraw** — For each payment method token with balance > $50, call `withdrawFunds()` to move tokens from contract to hot wallet
-2. **Hot wallet gas** — Server sends ETH to hot wallet if below `hot_wallet_gas_eth` (default 0.01 ETH)
-3. **Server stablecoin buffer** — Hot wallet sends stablecoin to server if below `server_stablecoin_buffer_usd` (default $50)
+1. **Withdraw** — If payment token balance > min threshold, call `withdrawFunds()` to move tokens from contract to hot wallet
+2. **Hot wallet gas** — Server sends BTC to hot wallet if below `hot_wallet_gas_sats` (default 100,000 sats)
+3. **Server stablecoin buffer** — Hot wallet sends stablecoin to server if below `server_stablecoin_buffer_sats`
 4. **Revenue shares** — If enabled in `revenue-share.json`, distribute configured % to dev/broker
 5. **Remainder to admin** — Send all remaining hot wallet token balances to admin
 
 ### Gas Check (every 30min, configurable)
 
-- Top up hot wallet ETH from server if below threshold
-- Check server wallet ETH balance; if below `gas_low_threshold_usd` ($5), swap USDC→ETH via Uniswap V2
+- Top up hot wallet BTC from server if below threshold
+- Check server wallet BTC balance; warn if below `gas_low_threshold_sats`
+- NativeSwap integration for stablecoin→BTC swaps is deferred (requires two-phase commit across blocks)
 
 ### Hot Wallet
 
@@ -213,11 +204,11 @@ Auto-generated on first fund cycle if not in addressbook. Private key saved to `
 |---|---|---|
 | `fund_cycle_interval_hours` | 24 | Hours between fund cycles |
 | `gas_check_interval_minutes` | 30 | Minutes between gas checks |
-| `min_withdrawal_usd` | 50 | Minimum USD value to trigger withdrawal |
-| `gas_low_threshold_usd` | 5 | Server ETH balance (in USD) that triggers a swap |
-| `gas_swap_amount_usd` | 20 | USDC amount to swap for ETH |
-| `server_stablecoin_buffer_usd` | 50 | Target stablecoin balance for server wallet |
-| `hot_wallet_gas_eth` | 0.01 | Target ETH balance for hot wallet |
+| `min_withdrawal_sats` | 50,000 | Minimum token amount (base units) to trigger withdrawal |
+| `gas_low_threshold_sats` | 10,000 | Server BTC balance (sats) that triggers a warning |
+| `gas_swap_amount_sats` | 50,000 | Amount (sats) for future NativeSwap gas top-up |
+| `server_stablecoin_buffer_sats` | 5,000,000 | Target stablecoin balance (base units) for server wallet |
+| `hot_wallet_gas_sats` | 100,000 | Target BTC balance (sats) for hot wallet |
 
 **`/etc/blockhost/addressbook.json`** — role-to-wallet mapping (written by installer):
 
@@ -256,7 +247,7 @@ bw send <amount> <token> <from> <to>       # Send tokens between wallets
 bw balance <role> [token]                   # Show wallet balances
 bw split <amount> <token> <ratios> <from> <to1> <to2> ...  # Split tokens
 bw withdraw [token] <to>                    # Withdraw from contract
-bw swap <amount> <from-token> eth <wallet>  # Swap token for ETH via Uniswap V2
+bw swap <amount> <from-token> btc <wallet>  # Swap token for BTC via MotoSwap/NativeSwap
 bw who <identifier>                        # Query NFT owner by token ID or 'admin'
 bw who <message> <signature>               # Recover signer address from signature
 bw config stable [address]                 # Get/set primary stablecoin on contract
@@ -265,14 +256,14 @@ bw set encrypt <nft_id> <data>             # Update NFT userEncrypted field
 bw --debug --cleanup <address>             # Sweep all testnet ETH to address
 ```
 
-- **Token shortcuts**: `eth` (native), `stable` (contract's primary stablecoin), or `0x` address
+- **Token shortcuts**: `btc` (native), `stable` (contract's payment token), or `0x` address
 - **Roles**: `admin`, `server`, `hot`, `dev`, `broker` (resolved from addressbook.json)
 - **Signing**: Only roles with `keyfile` in addressbook can be used as `<from>`/`<wallet>`
-- **`who`**: Queries `ownerOf(tokenId)` on the AccessCredentialNFT contract. Accepts a numeric token ID or `admin` (reads `admin.credential_nft_id` from `blockhost.yaml`). Also accepts `<message> <signature>` to recover the signer address. Config from `web3-defaults.yaml` (`blockchain.nft_contract`, `blockchain.rpc_url`) — no env vars or addressbook needed.
+- **`who`**: Queries `ownerOf(tokenId)` on the AccessCredentialNFT contract. Accepts a numeric token ID or `admin` (reads `admin.credential_nft_id` from `blockhost.yaml`). Config from `web3-defaults.yaml` (`nft_contract`, `rpc_url`) — no env vars or addressbook needed.
 - **`config stable`**: No arg reads current primary stablecoin address from contract; with arg calls `setPrimaryStablecoin()` (owner-only).
 - **`plan create`**: Creates a subscription plan on contract, prints the plan ID from the `PlanCreated` event.
 - **`set encrypt`**: Calls `updateUserEncrypted(tokenId, bytes)` on the NFT contract. NFT contract address from `web3-defaults.yaml`.
-- **`--cleanup`**: Debug utility — sweeps ETH from every signing wallet back to a single address. Requires `--debug` flag as a safety guard. Skips wallets that are the target or have insufficient balance for gas.
+- **`--cleanup`**: Debug utility — sweeps BTC from every signing wallet back to a single address. Requires `--debug` flag as a safety guard. Skips wallets that are the target or have insufficient balance for gas.
 
 The fund-manager module imports `executeSend()`, `executeWithdraw()`, and `executeSwap()` from the bw command modules directly — all wallet operations flow through the same code paths.
 
@@ -304,7 +295,7 @@ is <wallet> <nft_id>         # Does wallet own NFT token?
 is contract <address>        # Does a contract exist at address?
 ```
 
-Arguments are order-independent, disambiguated by type: address = `0x` + 40 hex chars, NFT ID = integer, `contract` = literal keyword.
+Arguments are order-independent, disambiguated by type: address = `0x` + 64 hex chars (32-byte OPNet address), NFT ID = integer, `contract` = literal keyword.
 
 ## blockhost-deploy-contracts
 
@@ -339,6 +330,6 @@ Length-prefixed JSON: 4-byte big-endian length + JSON payload (both directions).
 ### What does NOT go through the root agent
 
 - Reading keyfiles and addressbook.json — works via group permission (`blockhost` group, mode 0640)
-- ECIES decryption (`pam_web3_tool`) — `blockhost` user can read `server.key` via group permission
+- ECIES decryption (native `src/crypto.ts`) — `blockhost` user can read `server.key` via group permission
 - VM provisioning scripts — provisioner runs as `blockhost`
 - Process checks (`pgrep`) — no privilege needed

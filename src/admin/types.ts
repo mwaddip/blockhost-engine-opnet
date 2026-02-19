@@ -1,19 +1,17 @@
 /**
- * Admin command types for on-chain command processing
+ * Admin command types for HMAC-authenticated OP_RETURN protocol
  */
 
 import type { ChildProcess } from "child_process";
 
-export type DestinationMode = 'any' | 'self' | 'server' | 'null';
-
 /**
- * Admin command payload structure (encrypted in tx.data)
+ * Admin command payload (parsed from OP_RETURN)
+ *
+ * Wire format: "{nonce} {command}" + HMAC-SHA256(sharedKey)[:8 bytes]
  */
 export interface AdminCommand {
-  command: string;           // Secret command name (maps to action in database)
-  params: Record<string, unknown>;
-  nonce: string;             // REQUIRED for anti-replay (UUID)
-  timestamp: number;         // Unix timestamp
+  command: string;           // Command text (maps to action in command database)
+  nonce: string;             // Anti-replay nonce
 }
 
 /**
@@ -29,10 +27,9 @@ export interface KnockParams {
  * Admin configuration from blockhost.yaml
  */
 export interface AdminConfig {
-  wallet_address: string;           // Admin wallet address (required)
-  max_command_age?: number;         // Reject commands older than N seconds (default: 300)
-  destination_mode?: DestinationMode;  // How to filter tx.to (default: 'any')
-  destination_address?: string;     // Custom address for 'null' mode
+  wallet_address: string;           // Admin wallet (0x + 64 hex, OPNet internal format)
+  shared_key: string;               // HMAC shared key (32-byte hex, no prefix)
+  max_command_age?: number;         // Reject commands from blocks older than N seconds (default: 300)
 }
 
 /**

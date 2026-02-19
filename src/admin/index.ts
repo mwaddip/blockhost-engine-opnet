@@ -1,107 +1,143 @@
 /**
- * Admin command dispatcher
+ * Admin command dispatcher — HMAC-authenticated OP_RETURN protocol.
  *
- * Handles decryption, validation, and dispatch of on-chain admin commands.
+ * Protocol:
+ *   OP_RETURN payload = message_bytes + hmac_suffix(8 bytes)
+ *   message = "{nonce} {command text}" (UTF-8)
+ *   hmac_suffix = HMAC-SHA256(shared_key, message_bytes)[:8]
+ *
+ * Shared key: shake256(adminSchnorrSignature, {dkLen: 32}) — stored during
+ * initial admin setup in blockhost.yaml under admin.shared_key.
+ *
+ * NOTE: This relies on the OPNet provider returning raw Bitcoin transaction
+ * data (including non-OPNet OP_RETURN transactions). If the provider only
+ * indexes Interaction transactions, a Bitcoin JSON-RPC fallback will be needed.
  */
 
-import { execFileSync } from "child_process";
-import { ethers } from "ethers";
+import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha256';
+import type { JSONRpcProvider } from 'opnet';
 import type { AdminCommand, AdminConfig, CommandResult, CommandDatabase } from "./types";
-import { loadCommandDatabase, checkDestination, getServerPrivateKeyPath, loadServerPublicKey } from "./config";
+import { loadCommandDatabase } from "./config";
 import { isNonceUsed, markNonceUsed, pruneOldNonces, loadNonces } from "./nonces";
 import { executeKnock, closeAllKnocks } from "./handlers/knock";
 
-// Action handlers
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.startsWith('0x')) hex = hex.slice(2);
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Constant-time comparison of two Uint8Arrays.
+ */
+function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+// ── Action Handlers ──────────────────────────────────────────────────
+
 const ACTION_HANDLERS: Record<string, (params: Record<string, unknown>, config: Record<string, unknown>, txHash: string) => Promise<CommandResult>> = {
   knock: async (params, config, txHash) => executeKnock(params as any, config as any, txHash),
 };
 
+// ── OP_RETURN Parsing ────────────────────────────────────────────────
+
 /**
- * Attempt to decrypt transaction data as an admin command
- * Returns null if decryption fails (not an admin command)
+ * Extract data bytes from an OP_RETURN scriptPubKey hex string.
+ *
+ * Script format: 6a <push_opcode> <data>
+ *   - 0x01-0x4b: direct push (1-75 bytes)
+ *   - 0x4c: OP_PUSHDATA1 (next byte is length)
+ *   - 0x4d: OP_PUSHDATA2 (next 2 bytes LE are length)
  */
-export function tryDecryptCommand(txData: string): string | null {
-  const privateKeyPath = getServerPrivateKeyPath();
+function extractOpReturnData(scriptHex: string): Uint8Array | null {
+  const hex = scriptHex.startsWith('0x') ? scriptHex.slice(2) : scriptHex;
 
-  // Remove 0x prefix if present
-  const ciphertext = txData.startsWith('0x') ? txData.slice(2) : txData;
+  // Must start with 6a (OP_RETURN)
+  if (!hex.startsWith('6a') || hex.length < 4) return null;
 
-  if (!ciphertext || ciphertext.length < 10) {
+  let offset = 2; // past OP_RETURN
+  const pushByte = parseInt(hex.substring(offset, offset + 2), 16);
+  offset += 2;
+
+  let dataLen: number;
+  if (pushByte <= 0x4b) {
+    dataLen = pushByte;
+  } else if (pushByte === 0x4c) {
+    if (offset + 2 > hex.length) return null;
+    dataLen = parseInt(hex.substring(offset, offset + 2), 16);
+    offset += 2;
+  } else if (pushByte === 0x4d) {
+    if (offset + 4 > hex.length) return null;
+    const lo = parseInt(hex.substring(offset, offset + 2), 16);
+    const hi = parseInt(hex.substring(offset + 2, offset + 4), 16);
+    dataLen = (hi << 8) | lo;
+    offset += 4;
+  } else {
     return null;
   }
 
-  try {
-    // Use pam_web3_tool for ECIES decryption
-    const result = execFileSync(
-      "pam_web3_tool",
-      ["decrypt", "--private-key-file", privateKeyPath, "--ciphertext", ciphertext],
-      { encoding: "utf8", timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-    // Strip "Decrypted: " prefix if present
-    return result.trim().replace(/^Decrypted:\s*/, '');
-  } catch {
-    // Decryption failed - this is not an admin command
-    return null;
-  }
+  const dataHex = hex.substring(offset, offset + dataLen * 2);
+  if (dataHex.length !== dataLen * 2) return null;
+
+  return hexToBytes('0x' + dataHex);
 }
 
 /**
- * Parse and validate a decrypted command payload
+ * Parse and verify an OP_RETURN payload as an HMAC-authenticated admin command.
+ *
+ * @param payload  - Raw OP_RETURN data bytes (after opcode + push)
+ * @param sharedKey - 32-byte shared key (hex, no prefix)
+ * @returns Parsed command or null if HMAC verification fails
  */
-export function parseCommand(decryptedPayload: string): AdminCommand | null {
-  try {
-    const cmd = JSON.parse(decryptedPayload) as AdminCommand;
+export function parseOpReturnCommand(payload: Uint8Array, sharedKey: string): AdminCommand | null {
+  // Minimum: 1 (nonce) + 1 (space) + 1 (command) + 8 (hmac) = 11 bytes
+  if (payload.length < 11) return null;
 
-    // Validate required fields
-    if (!cmd.command || typeof cmd.command !== 'string') {
-      console.warn(`[ADMIN] Command missing 'command' field`);
-      return null;
-    }
+  const message = payload.slice(0, payload.length - 8);
+  const hmacSuffix = payload.slice(payload.length - 8);
 
-    if (!cmd.nonce || typeof cmd.nonce !== 'string') {
-      console.warn(`[ADMIN] Command missing 'nonce' field`);
-      return null;
-    }
+  // Verify HMAC-SHA256 truncated to 8 bytes
+  const keyBytes = hexToBytes(sharedKey);
+  const expectedHmac = hmac(sha256, keyBytes, message).slice(0, 8);
 
-    if (!cmd.timestamp || typeof cmd.timestamp !== 'number') {
-      console.warn(`[ADMIN] Command missing 'timestamp' field`);
-      return null;
-    }
-
-    // Ensure params is an object
-    if (!cmd.params || typeof cmd.params !== 'object') {
-      cmd.params = {};
-    }
-
-    return cmd;
-  } catch (err) {
-    console.warn(`[ADMIN] Failed to parse command JSON: ${err}`);
-    return null;
+  if (!timingSafeEqual(hmacSuffix, expectedHmac)) {
+    return null; // HMAC mismatch — not an admin command
   }
+
+  // Parse message: "{nonce} {command}"
+  const messageStr = new TextDecoder().decode(message);
+  const spaceIdx = messageStr.indexOf(' ');
+  if (spaceIdx < 1) return null;
+
+  const nonce = messageStr.slice(0, spaceIdx);
+  const command = messageStr.slice(spaceIdx + 1).trim();
+
+  if (!nonce || !command) return null;
+
+  return { command, nonce };
 }
 
+// ── Validation & Dispatch ────────────────────────────────────────────
+
 /**
- * Validate command timestamp and nonce
+ * Validate command nonce (anti-replay)
  */
-export function validateCommand(cmd: AdminCommand, maxAgeSeconds: number): { valid: boolean; reason?: string } {
-  const now = Math.floor(Date.now() / 1000);
-
-  // Check timestamp is not too old
-  const age = now - cmd.timestamp;
-  if (age > maxAgeSeconds) {
-    return { valid: false, reason: `Command too old (${age}s > ${maxAgeSeconds}s)` };
-  }
-
-  // Check timestamp is not in the future (with 60s tolerance)
-  if (cmd.timestamp > now + 60) {
-    return { valid: false, reason: `Command timestamp in future` };
-  }
-
-  // Check nonce not already used (anti-replay)
+export function validateCommand(cmd: AdminCommand): { valid: boolean; reason?: string } {
   if (isNonceUsed(cmd.nonce)) {
     return { valid: false, reason: `Nonce already used (replay attack prevented)` };
   }
-
   return { valid: true };
 }
 
@@ -113,72 +149,45 @@ export async function dispatchCommand(
   txHash: string,
   commandDb: CommandDatabase
 ): Promise<CommandResult> {
-  // Look up command name in database
   const cmdDef = commandDb.commands[cmd.command];
   if (!cmdDef) {
-    return {
-      success: false,
-      message: `Unknown command: ${cmd.command}`,
-    };
+    return { success: false, message: `Unknown command: ${cmd.command}` };
   }
 
-  // Get action handler
   const handler = ACTION_HANDLERS[cmdDef.action];
   if (!handler) {
-    return {
-      success: false,
-      message: `Unknown action type: ${cmdDef.action}`,
-    };
+    return { success: false, message: `Unknown action type: ${cmdDef.action}` };
   }
 
   console.log(`[ADMIN] Dispatching action '${cmdDef.action}' for command '${cmd.command}'`);
-
-  // Merge command params with definition params (command params override)
-  const mergedParams = { ...cmdDef.params, ...cmd.params };
-
-  // Execute the handler
-  return handler(mergedParams, cmdDef.params, txHash);
+  return handler(cmdDef.params, cmdDef.params, txHash);
 }
 
+// ── Block Processing ─────────────────────────────────────────────────
+
 /**
- * Process admin commands from transactions in a block range
- *
- * This is called from the monitor's poll loop after processing contract events.
+ * Process admin commands from OP_RETURN outputs in a block range.
  */
 export async function processAdminCommands(
-  provider: ethers.Provider,
+  provider: JSONRpcProvider,
   adminConfig: AdminConfig,
-  fromBlock: number,
-  toBlock: number
+  fromBlock: bigint,
+  toBlock: bigint
 ): Promise<void> {
-  // Load server public key for destination check
-  const serverPublicKey = loadServerPublicKey();
-  if (!serverPublicKey && adminConfig.destination_mode === 'server') {
-    console.warn(`[ADMIN] Server public key not configured, skipping admin commands`);
-    return;
-  }
-
-  // Load command database
   const commandDb = loadCommandDatabase();
-  if (!commandDb) {
-    return; // No commands configured
-  }
+  if (!commandDb) return;
 
-  // Periodically prune old nonces
   pruneOldNonces(adminConfig.max_command_age || 300);
 
-  // Process each block
   for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
     try {
-      // Get block with full transaction data
       const block = await provider.getBlock(blockNum, true);
-      if (!block || !block.prefetchedTransactions) {
-        continue;
-      }
+      if (!block) continue;
 
-      // Check each transaction
-      for (const tx of block.prefetchedTransactions) {
-        await processTransaction(tx, adminConfig, serverPublicKey || '', commandDb);
+      // Scan transactions for OP_RETURN outputs
+      const txs = (block as any).transactions ?? [];
+      for (const tx of txs) {
+        await processTransaction(tx, adminConfig, commandDb);
       }
     } catch (err) {
       console.error(`[ADMIN] Error processing block ${blockNum}: ${err}`);
@@ -187,72 +196,67 @@ export async function processAdminCommands(
 }
 
 /**
- * Process a single transaction as a potential admin command
+ * Process a single transaction for potential admin OP_RETURN commands.
+ *
+ * OPNet transaction fields:
+ *   tx.from — Address object (use .toHex() for string)
+ *   tx.outputs — TransactionOutput[]
+ *   tx.outputs[].scriptPubKey.hex — raw script hex (string)
+ *   tx.hash — transaction hash (string)
  */
 async function processTransaction(
-  tx: ethers.TransactionResponse,
+  tx: any,
   adminConfig: AdminConfig,
-  serverPublicKey: string,
   commandDb: CommandDatabase
 ): Promise<void> {
-  // Check sender is admin wallet
-  if (tx.from.toLowerCase() !== adminConfig.wallet_address) {
-    return; // Not from admin
-  }
+  // Check sender matches admin wallet (tx.from is an Address object)
+  const sender = (tx.from?.toHex?.() ?? tx.from?.toString() ?? '').toLowerCase();
+  if (sender !== adminConfig.wallet_address) return;
 
-  // Check transaction has data
-  if (!tx.data || tx.data === '0x' || tx.data.length < 10) {
-    return; // No data payload
-  }
+  // Scan outputs for OP_RETURN
+  const outputs = tx.outputs ?? [];
+  for (const output of outputs) {
+    const scriptHex: string = output.scriptPubKey?.hex ?? '';
 
-  // Check destination matches configured mode
-  if (!checkDestination(tx.to, adminConfig, serverPublicKey)) {
-    return; // Destination doesn't match
-  }
+    // OP_RETURN starts with 6a
+    const cleanHex = scriptHex.startsWith('0x') ? scriptHex.slice(2) : scriptHex;
+    if (!cleanHex.startsWith('6a')) continue;
 
-  // Attempt ECIES decryption
-  const decrypted = tryDecryptCommand(tx.data);
-  if (!decrypted) {
-    return; // Decryption failed - not an admin command
-  }
+    const payload = extractOpReturnData(cleanHex);
+    if (!payload || payload.length === 0) continue;
 
-  console.log(`[ADMIN] Decrypted potential command from tx: ${tx.hash}`);
+    const cmd = parseOpReturnCommand(payload, adminConfig.shared_key);
+    if (!cmd) continue; // HMAC failed — not an admin command
 
-  // Parse command JSON
-  const cmd = parseCommand(decrypted);
-  if (!cmd) {
-    console.warn(`[ADMIN] Invalid command format in tx: ${tx.hash}`);
-    return;
-  }
+    const txHash: string = tx.hash ?? tx.id ?? 'unknown';
+    console.log(`[ADMIN] Verified admin command from tx: ${txHash}`);
 
-  // Validate timestamp and nonce
-  const validation = validateCommand(cmd, adminConfig.max_command_age || 300);
-  if (!validation.valid) {
-    console.warn(`[ADMIN] Command validation failed: ${validation.reason} (tx: ${tx.hash})`);
-    return;
-  }
+    const validation = validateCommand(cmd);
+    if (!validation.valid) {
+      console.warn(`[ADMIN] Command validation failed: ${validation.reason} (tx: ${txHash})`);
+      continue;
+    }
 
-  // Mark nonce as used BEFORE executing (prevents race conditions)
-  markNonceUsed(cmd.nonce);
+    markNonceUsed(cmd.nonce);
+    console.log(`[ADMIN] Executing command '${cmd.command}' from tx: ${txHash}`);
 
-  console.log(`[ADMIN] Executing command '${cmd.command}' from tx: ${tx.hash}`);
-
-  // Dispatch command
-  const result = await dispatchCommand(cmd, tx.hash, commandDb);
-
-  if (result.success) {
-    console.log(`[ADMIN] Command succeeded: ${result.message}`);
-  } else {
-    console.error(`[ADMIN] Command failed: ${result.message}`);
+    const result = await dispatchCommand(cmd, txHash, commandDb);
+    if (result.success) {
+      console.log(`[ADMIN] Command succeeded: ${result.message}`);
+    } else {
+      console.error(`[ADMIN] Command failed: ${result.message}`);
+    }
   }
 }
+
+// ── Lifecycle ────────────────────────────────────────────────────────
 
 /**
  * Initialize admin command system
  */
 export function initAdminCommands(): void {
   loadNonces();
-  console.log(`[ADMIN] Admin command system initialized`);
+  console.log(`[ADMIN] Admin command system initialized (HMAC OP_RETURN)`);
 }
 
 /**

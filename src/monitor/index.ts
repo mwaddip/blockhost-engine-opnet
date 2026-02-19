@@ -1,9 +1,16 @@
 /**
- * Event monitor for BlockhostSubscriptions contract
- * Uses polling to fetch logs (compatible with public RPCs that don't support filters)
+ * Event monitor for BlockhostSubscriptions contract (OPNet)
+ *
+ * Polls OPNet blocks for contract events and dispatches to handlers.
+ * Also runs admin commands, NFT reconciliation, and fund management.
  */
 
-import { ethers } from "ethers";
+import { getContract, JSONRpcProvider } from "opnet";
+import { networks, type Network } from "@btc-vision/bitcoin";
+import {
+  BLOCKHOST_SUBSCRIPTIONS_ABI,
+  type IBlockhostSubscriptions,
+} from "../fund-manager/contract-abis";
 import {
   handleSubscriptionCreated,
   handleSubscriptionExtended,
@@ -30,125 +37,146 @@ import {
   getFundCycleInterval,
   getGasCheckInterval,
 } from "../fund-manager";
-
-// Contract ABI - only the events we care about
-const CONTRACT_ABI = [
-  "event PlanCreated(uint256 indexed planId, string name, uint256 pricePerDayUsdCents)",
-  "event PlanUpdated(uint256 indexed planId, string name, uint256 pricePerDayUsdCents, bool active)",
-  "event SubscriptionCreated(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber, uint256 expiresAt, uint256 paidAmount, address paymentToken, bytes userEncrypted)",
-  "event SubscriptionExtended(uint256 indexed subscriptionId, uint256 indexed planId, address indexed extendedBy, uint256 newExpiresAt, uint256 paidAmount, address paymentToken)",
-  "event SubscriptionCancelled(uint256 indexed subscriptionId, uint256 indexed planId, address indexed subscriber)",
-  "event PrimaryStablecoinSet(address indexed stablecoinAddress, uint8 decimals)",
-  "event PaymentMethodAdded(uint256 indexed paymentMethodId, address tokenAddress, address pairAddress, address stablecoinAddress)",
-  "event PaymentMethodUpdated(uint256 indexed paymentMethodId, bool active)",
-  "event FundsWithdrawn(address indexed token, address indexed to, uint256 amount)",
-];
+import { loadWeb3Config } from "../fund-manager/web3-config";
 
 const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
 
-async function processLogs(
-  contract: ethers.Contract,
-  fromBlock: number,
-  toBlock: number
+/**
+ * Process a single block for contract events.
+ *
+ * tx.events is a map: { [contractP2OP: string]: NetEvent[] }
+ * Raw NetEvent only has `type` (string) and `data` (Uint8Array).
+ *
+ * contract.decodeEvents() accepts the full map, filters by its own
+ * address (P2OP lookup), and returns OPNetEvent[] with `properties`.
+ */
+async function processBlock(
+  provider: JSONRpcProvider,
+  blockNumber: bigint,
+  contract: IBlockhostSubscriptions,
 ): Promise<void> {
-  const iface = contract.interface;
+  const block = await provider.getBlock(blockNumber, true);
+  if (!block) return;
 
-  // Query all events from the contract
-  const filter = { address: await contract.getAddress(), fromBlock, toBlock };
-  const provider = contract.runner as ethers.Provider;
-  const logs = await provider.getLogs(filter);
+  for (const tx of block.transactions) {
+    // decodeEvents() accepts the full events map and filters by contract address
+    const decoded = contract.decodeEvents(tx.events);
+    if (decoded.length === 0) continue;
 
-  for (const log of logs) {
-    try {
-      const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-      if (!parsed) continue;
-
-      const txHash = log.transactionHash;
-
-      switch (parsed.name) {
-        case "SubscriptionCreated":
-          await handleSubscriptionCreated({
-            subscriptionId: parsed.args[0],
-            planId: parsed.args[1],
-            subscriber: parsed.args[2],
-            expiresAt: parsed.args[3],
-            paidAmount: parsed.args[4],
-            paymentToken: parsed.args[5],
-            userEncrypted: parsed.args[6],
-          }, txHash);
-          break;
-
-        case "SubscriptionExtended":
-          await handleSubscriptionExtended({
-            subscriptionId: parsed.args[0],
-            planId: parsed.args[1],
-            extendedBy: parsed.args[2],
-            newExpiresAt: parsed.args[3],
-            paidAmount: parsed.args[4],
-            paymentToken: parsed.args[5],
-          }, txHash);
-          break;
-
-        case "SubscriptionCancelled":
-          await handleSubscriptionCancelled({
-            subscriptionId: parsed.args[0],
-            planId: parsed.args[1],
-            subscriber: parsed.args[2],
-          }, txHash);
-          break;
-
-        case "PlanCreated":
-          await handlePlanCreated({
-            planId: parsed.args[0],
-            name: parsed.args[1],
-            pricePerDayUsdCents: parsed.args[2],
-          }, txHash);
-          break;
-
-        case "PlanUpdated":
-          await handlePlanUpdated({
-            planId: parsed.args[0],
-            name: parsed.args[1],
-            pricePerDayUsdCents: parsed.args[2],
-            active: parsed.args[3],
-          }, txHash);
-          break;
-
-        case "PrimaryStablecoinSet":
-          console.log(`[INFO] PrimaryStablecoinSet: ${parsed.args[0]} (${parsed.args[1]} decimals) - tx: ${txHash}`);
-          break;
-
-        case "PaymentMethodAdded":
-          console.log(`[INFO] PaymentMethodAdded: ID ${parsed.args[0]}, token ${parsed.args[1]} - tx: ${txHash}`);
-          break;
-
-        case "PaymentMethodUpdated":
-          console.log(`[INFO] PaymentMethodUpdated: ID ${parsed.args[0]}, active: ${parsed.args[1]} - tx: ${txHash}`);
-          break;
-
-        case "FundsWithdrawn":
-          console.log(`[INFO] FundsWithdrawn: ${ethers.formatUnits(parsed.args[2], 6)} of ${parsed.args[0]} to ${parsed.args[1]} - tx: ${txHash}`);
-          break;
+    const txHash = tx.hash;
+    for (const event of decoded) {
+      try {
+        await dispatchEvent(event, txHash);
+      } catch (err) {
+        console.error(`Error handling event from tx ${txHash}: ${err}`);
       }
-    } catch (err) {
-      console.error(`Error parsing log: ${err}`);
     }
   }
 }
 
-async function main() {
-  // Load configuration from environment
-  const rpcUrl = process.env.RPC_URL;
-  const contractAddress = process.env.BLOCKHOST_CONTRACT;
+/**
+ * Dispatch an ABI-decoded OPNetEvent to the appropriate handler.
+ * After decodeEvents(), event.type is the name and event.properties has decoded fields.
+ */
+async function dispatchEvent(event: any, txHash: string): Promise<void> {
+  const eventName: string = event.type ?? '';
+  const props = event.properties ?? {};
 
-  if (!rpcUrl) {
-    console.error("Error: RPC_URL environment variable not set");
-    process.exit(1);
+  switch (eventName) {
+    case "SubscriptionCreated": {
+      // userEncrypted may be Uint8Array (BYTES type) — convert to hex
+      const rawUE = props.userEncrypted;
+      const userEncrypted = rawUE instanceof Uint8Array
+        ? '0x' + Array.from(rawUE).map((b: number) => b.toString(16).padStart(2, '0')).join('')
+        : String(rawUE ?? '0x');
+
+      await handleSubscriptionCreated({
+        subscriptionId: props.subscriptionId,
+        planId: props.planId,
+        subscriber: String(props.subscriber),
+        expiresAt: props.expiresAt,
+        paidAmount: props.paidAmount,
+        userEncrypted,
+      }, txHash);
+      break;
+    }
+
+    case "SubscriptionExtended":
+      await handleSubscriptionExtended({
+        subscriptionId: props.subscriptionId,
+        planId: props.planId,
+        extendedBy: String(props.extendedBy),
+        newExpiresAt: props.newExpiresAt,
+        paidAmount: props.paidAmount,
+      }, txHash);
+      break;
+
+    case "SubscriptionCancelled":
+      await handleSubscriptionCancelled({
+        subscriptionId: props.subscriptionId,
+        planId: props.planId,
+        subscriber: String(props.subscriber),
+      }, txHash);
+      break;
+
+    case "PlanCreated":
+      await handlePlanCreated({
+        planId: props.planId,
+        name: props.name,
+        pricePerDayUsdCents: props.pricePerDay,
+      }, txHash);
+      break;
+
+    case "PlanUpdated":
+      await handlePlanUpdated({
+        planId: props.planId,
+        name: props.name,
+        pricePerDayUsdCents: props.pricePerDay,
+        active: props.active,
+      }, txHash);
+      break;
+
+    case "AcceptingSubscriptionsChanged":
+      console.log(`[INFO] AcceptingSubscriptionsChanged: ${props.accepting} - tx: ${txHash}`);
+      break;
+
+    default:
+      if (eventName) {
+        console.log(`[INFO] ${eventName}: ${JSON.stringify(props)} - tx: ${txHash}`);
+      }
+      break;
   }
+}
 
-  if (!contractAddress) {
-    console.error("Error: BLOCKHOST_CONTRACT environment variable not set");
-    process.exit(1);
+async function main() {
+  // Load configuration from web3-defaults.yaml (with env var fallback)
+  let rpcUrl: string;
+  let contractAddress: string;
+  let network: Network;
+
+  try {
+    const web3Config = loadWeb3Config();
+    rpcUrl = process.env.RPC_URL || web3Config.rpcUrl;
+    contractAddress = process.env.BLOCKHOST_CONTRACT || web3Config.subscriptionsContract;
+    network = web3Config.network;
+  } catch {
+    // Fall back to env vars if web3-defaults.yaml not available
+    rpcUrl = process.env.RPC_URL || '';
+    contractAddress = process.env.BLOCKHOST_CONTRACT || '';
+
+    if (!rpcUrl) {
+      console.error("Error: RPC_URL not set and web3-defaults.yaml not found");
+      process.exit(1);
+    }
+    if (!contractAddress) {
+      console.error("Error: BLOCKHOST_CONTRACT not set and web3-defaults.yaml not found");
+      process.exit(1);
+    }
+
+    // Infer network from RPC URL
+    if (rpcUrl.includes('mainnet')) network = networks.bitcoin;
+    else if (rpcUrl.includes('testnet')) network = networks.testnet;
+    else network = networks.regtest;
   }
 
   console.log("==============================================");
@@ -156,15 +184,15 @@ async function main() {
   console.log("==============================================");
   console.log(`Contract: ${contractAddress}`);
   console.log(`RPC: ${rpcUrl}`);
+  console.log(`Network: ${network === networks.bitcoin ? 'mainnet' : network === networks.testnet ? 'testnet' : 'regtest'}`);
   console.log(`Poll Interval: ${POLL_INTERVAL_MS}ms`);
   console.log("----------------------------------------------\n");
 
   // Load admin configuration (optional)
   const adminConfig = loadAdminConfig();
   if (adminConfig) {
-    console.log(`Admin commands: ENABLED`);
+    console.log(`Admin commands: ENABLED (HMAC OP_RETURN)`);
     console.log(`Admin wallet: ${adminConfig.wallet_address}`);
-    console.log(`Destination mode: ${adminConfig.destination_mode || 'any'}`);
     initAdminCommands();
   } else {
     console.log(`Admin commands: DISABLED (not configured)`);
@@ -172,16 +200,17 @@ async function main() {
   console.log("----------------------------------------------\n");
 
   // Connect to the network
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const network = await provider.getNetwork();
-  console.log(`Connected to network: ${network.name} (chainId: ${network.chainId})`);
-
-  // Create contract instance
-  const contract = new ethers.Contract(contractAddress, CONTRACT_ABI, provider);
+  const provider = new JSONRpcProvider(rpcUrl, network);
+  const contract = getContract<IBlockhostSubscriptions>(
+    contractAddress,
+    BLOCKHOST_SUBSCRIPTIONS_ABI,
+    provider,
+    network,
+  );
 
   // Start from current block
   let lastProcessedBlock = await provider.getBlockNumber();
-  console.log(`Starting from block: ${lastProcessedBlock}`);
+  console.log(`Connected. Starting from block: ${lastProcessedBlock}`);
   console.log(`NFT reconciliation: every ${getReconcileInterval() / 1000}s`);
   console.log(`Fund cycle: every ${getFundCycleInterval() / 3600000}h`);
   console.log(`Gas check: every ${getGasCheckInterval() / 60000}min`);
@@ -196,11 +225,13 @@ async function main() {
         const currentBlock = await provider.getBlockNumber();
 
         if (currentBlock > lastProcessedBlock) {
-          const fromBlock = lastProcessedBlock + 1;
+          const fromBlock = lastProcessedBlock + 1n;
           const toBlock = currentBlock;
 
-          // Process contract events
-          await processLogs(contract, fromBlock, toBlock);
+          // Process contract events block by block
+          for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
+            await processBlock(provider, blockNum, contract);
+          }
 
           // Process admin commands from transactions (if configured)
           if (adminConfig) {
@@ -212,21 +243,21 @@ async function main() {
 
         // Run NFT reconciliation periodically (non-blocking health check)
         if (shouldRunReconciliation()) {
-          runReconciliation(provider).catch((err) => {
+          runReconciliation(provider, network).catch((err) => {
             console.error(`[RECONCILE] Error: ${err}`);
           });
         }
 
         // Run fund withdrawal & distribution cycle periodically
         if (shouldRunFundCycle()) {
-          runFundCycle(provider).catch((err) => {
+          runFundCycle(provider, network).catch((err) => {
             console.error(`[FUND] Error: ${err}`);
           });
         }
 
         // Check gas balance and swap if needed
         if (shouldRunGasCheck()) {
-          runGasCheck(provider).catch((err) => {
+          runGasCheck(provider, network).catch((err) => {
             console.error(`[GAS] Error: ${err}`);
           });
         }

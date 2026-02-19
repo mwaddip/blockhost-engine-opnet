@@ -1,5 +1,9 @@
 /**
- * Fund manager configuration loading with defaults
+ * Fund manager configuration loading with defaults (OPNet)
+ *
+ * All monetary thresholds use base units:
+ *   - BTC thresholds: satoshis
+ *   - Token thresholds: token base units (e.g. 8 decimals for most OP20s)
  */
 
 import * as fs from "fs";
@@ -12,11 +16,11 @@ const REVENUE_SHARE_PATH = "/etc/blockhost/revenue-share.json";
 const DEFAULTS: FundManagerConfig = {
   fund_cycle_interval_hours: 24,
   gas_check_interval_minutes: 30,
-  min_withdrawal_usd: 50,
-  gas_low_threshold_usd: 5,
-  gas_swap_amount_usd: 20,
-  server_stablecoin_buffer_usd: 50,
-  hot_wallet_gas_eth: 0.01,
+  min_withdrawal_sats: 50_000n,           // 0.0005 BTC or 50k token base units
+  gas_low_threshold_sats: 10_000n,        // 0.0001 BTC — triggers gas swap warning
+  gas_swap_amount_sats: 50_000n,          // 0.0005 BTC — target swap amount
+  server_stablecoin_buffer_sats: 5_000_000n,  // stablecoin buffer in token base units
+  hot_wallet_gas_sats: 100_000n,          // 0.001 BTC — target hot wallet BTC balance
 };
 
 /**
@@ -42,16 +46,16 @@ export function loadFundManagerConfig(): FundManagerConfig {
         (fm.fund_cycle_interval_hours as number) || DEFAULTS.fund_cycle_interval_hours,
       gas_check_interval_minutes:
         (fm.gas_check_interval_minutes as number) || DEFAULTS.gas_check_interval_minutes,
-      min_withdrawal_usd:
-        (fm.min_withdrawal_usd as number) || DEFAULTS.min_withdrawal_usd,
-      gas_low_threshold_usd:
-        (fm.gas_low_threshold_usd as number) || DEFAULTS.gas_low_threshold_usd,
-      gas_swap_amount_usd:
-        (fm.gas_swap_amount_usd as number) || DEFAULTS.gas_swap_amount_usd,
-      server_stablecoin_buffer_usd:
-        (fm.server_stablecoin_buffer_usd as number) || DEFAULTS.server_stablecoin_buffer_usd,
-      hot_wallet_gas_eth:
-        (fm.hot_wallet_gas_eth as number) || DEFAULTS.hot_wallet_gas_eth,
+      min_withdrawal_sats:
+        fm.min_withdrawal_sats ? BigInt(fm.min_withdrawal_sats as number) : DEFAULTS.min_withdrawal_sats,
+      gas_low_threshold_sats:
+        fm.gas_low_threshold_sats ? BigInt(fm.gas_low_threshold_sats as number) : DEFAULTS.gas_low_threshold_sats,
+      gas_swap_amount_sats:
+        fm.gas_swap_amount_sats ? BigInt(fm.gas_swap_amount_sats as number) : DEFAULTS.gas_swap_amount_sats,
+      server_stablecoin_buffer_sats:
+        fm.server_stablecoin_buffer_sats ? BigInt(fm.server_stablecoin_buffer_sats as number) : DEFAULTS.server_stablecoin_buffer_sats,
+      hot_wallet_gas_sats:
+        fm.hot_wallet_gas_sats ? BigInt(fm.hot_wallet_gas_sats as number) : DEFAULTS.hot_wallet_gas_sats,
     };
   } catch (err) {
     console.error(`[FUND] Error loading config: ${err}`);

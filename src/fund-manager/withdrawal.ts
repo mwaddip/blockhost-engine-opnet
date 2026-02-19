@@ -1,105 +1,79 @@
 /**
- * Contract withdrawal logic
+ * Contract withdrawal logic (OPNet)
  *
- * Step 1 of the fund cycle: withdraw accumulated tokens from the
+ * Step 1 of the fund cycle: withdraw accumulated payment tokens from the
  * subscription contract to the hot wallet.
- * Uses bw withdraw under the hood.
+ *
+ * On OPNet, the BlockhostSubscriptions contract has a single payment token
+ * and a withdraw(to) method that moves the accumulated balance to a recipient.
  */
 
-import { ethers } from "ethers";
+import type { JSONRpcProvider } from "opnet";
+import type { Network } from "@btc-vision/bitcoin";
 import type { Addressbook, FundManagerConfig } from "./types";
-import { getTokenBalance } from "./token-utils";
+import type { IBlockhostSubscriptions } from "./contract-abis";
+import { getTokenBalance, formatTokenBalance } from "./token-utils";
 import { executeWithdraw } from "../bw/commands/withdraw";
 
 /**
- * Withdraw all eligible token balances from the contract to the hot wallet.
- * Only withdraws tokens whose USD value exceeds the configured threshold.
+ * Withdraw payment token balance from the contract to the hot wallet.
+ * Only withdraws if balance exceeds the configured threshold.
  */
 export async function withdrawFromContract(
   book: Addressbook,
   config: FundManagerConfig,
-  provider: ethers.Provider,
-  contract: ethers.Contract
+  contract: IBlockhostSubscriptions,
+  contractAddress: string,
+  provider: JSONRpcProvider,
+  network: Network,
 ): Promise<void> {
   if (!book.server?.keyfile) {
     console.error("[FUND] Cannot withdraw: server wallet has no keyfile");
     return;
   }
 
-  const hotAddress = book.hot?.address;
-  if (!hotAddress) {
+  if (!book.hot?.address) {
     console.error("[FUND] Cannot withdraw: hot wallet not configured");
     return;
   }
 
-  const contractAddress = await contract.getAddress();
-
-  // Get all payment method IDs
-  let paymentMethodIds: bigint[];
-  try {
-    paymentMethodIds = await contract.getPaymentMethodIds();
-  } catch (err) {
-    console.error(`[FUND] Error getting payment method IDs: ${err}`);
+  // Get payment token address
+  const tokenResult = await contract.getPaymentToken();
+  if ('error' in tokenResult) {
+    console.error("[FUND] Error querying payment token");
     return;
   }
 
-  if (paymentMethodIds.length === 0) {
-    console.log("[FUND] No payment methods configured, skipping withdrawal");
+  const tokenAddr = tokenResult.properties.token.toString();
+  const zeroAddr = '0x' + '0'.repeat(64);
+  if (tokenAddr === zeroAddr) {
+    console.log("[FUND] No payment token configured, skipping withdrawal");
     return;
   }
 
-  // Collect unique token addresses with their payment method ID (for price lookup)
-  const tokens = new Map<string, { address: string; pmId: bigint }>();
-  for (const pmId of paymentMethodIds) {
-    try {
-      const [tokenAddress, , , , , active] = await contract.getPaymentMethod(pmId);
-      if (!active) continue;
-      const addrLower = tokenAddress.toLowerCase();
-      if (!tokens.has(addrLower)) {
-        tokens.set(addrLower, { address: tokenAddress, pmId });
-      }
-    } catch (err) {
-      console.error(`[FUND] Error querying payment method ${pmId}: ${err}`);
-    }
+  // Check contract's token balance
+  const { balance, decimals, symbol } = await getTokenBalance(
+    tokenAddr,
+    contractAddress,
+    provider,
+    network,
+  );
+
+  if (balance === 0n) {
+    console.log("[FUND] No token balance in contract, skipping withdrawal");
+    return;
   }
 
-  // For each unique token, check contract balance and withdraw if above threshold
-  for (const [, { address: tokenAddress, pmId }] of tokens) {
-    try {
-      const { balance, decimals, symbol } = await getTokenBalance(
-        tokenAddress,
-        contractAddress,
-        provider
-      );
-      if (balance === 0n) continue;
-
-      // Check USD value
-      let usdValue: number;
-      try {
-        const priceUsdCents: bigint = await contract.getTokenPriceUsdCents(pmId);
-        const balanceFloat = parseFloat(ethers.formatUnits(balance, decimals));
-        usdValue = (balanceFloat * Number(priceUsdCents)) / 100;
-      } catch {
-        usdValue = parseFloat(ethers.formatUnits(balance, decimals));
-      }
-
-      if (usdValue < config.min_withdrawal_usd) {
-        console.log(
-          `[FUND] Skipping ${symbol}: $${usdValue.toFixed(2)} below $${config.min_withdrawal_usd} threshold`
-        );
-        continue;
-      }
-
-      console.log(
-        `[FUND] Withdrawing ${ethers.formatUnits(balance, decimals)} ${symbol} (~$${usdValue.toFixed(2)}) to hot wallet`
-      );
-
-      const txHash = await executeWithdraw(tokenAddress, "hot", book, provider, contractAddress);
-      if (txHash) {
-        console.log(`[FUND] Withdrawal complete: tx ${txHash}`);
-      }
-    } catch (err) {
-      console.error(`[FUND] Error withdrawing ${tokenAddress}: ${err}`);
-    }
+  // Check if balance meets minimum threshold
+  if (balance < config.min_withdrawal_sats) {
+    console.log(
+      `[FUND] Skipping withdrawal: ${formatTokenBalance(balance, decimals, symbol)} below threshold`
+    );
+    return;
   }
+
+  console.log(`[FUND] Withdrawing ${formatTokenBalance(balance, decimals, symbol)} to hot wallet`);
+
+  await executeWithdraw("hot", book, provider, contractAddress, network);
+  console.log("[FUND] Withdrawal complete");
 }

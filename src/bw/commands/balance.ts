@@ -2,6 +2,7 @@
  * bw balance <role> [token]
  *
  * Show balances for a wallet (native BTC + payment token, or a specific token).
+ * Core function executeBalance() is also used by fund-manager.
  */
 
 import { JSONRpcProvider } from 'opnet';
@@ -14,6 +15,55 @@ import {
 } from '../../fund-manager/token-utils.js';
 import { resolveToken, formatBtc } from '../cli-utils.js';
 import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
+
+export interface BalanceResult {
+    address: string;
+    btcBalance: bigint;
+    tokenBalance?: bigint;
+    tokenDecimals?: number;
+    tokenSymbol?: string;
+    tokenAddress?: string;
+}
+
+/**
+ * Core balance query — used by both CLI and fund-manager.
+ * Returns BTC balance and optionally a token balance.
+ *
+ * @param roleOrAddr  Addressbook role name or raw 0x address
+ * @param tokenArg    Optional: "btc", "stable", or 0x token address.
+ *                    If omitted, only BTC balance is returned.
+ */
+export async function executeBalance(
+    roleOrAddr: string,
+    tokenArg: string | undefined,
+    book: Addressbook,
+    provider: JSONRpcProvider,
+    contract: IBlockhostSubscriptions,
+    network: Network,
+): Promise<BalanceResult> {
+    const address = resolveAddress(roleOrAddr, book);
+    if (!address) {
+        throw new Error(`Cannot resolve address for '${roleOrAddr}'`);
+    }
+
+    const btcBalance = await provider.getBalance(address, true);
+    const result: BalanceResult = { address, btcBalance };
+
+    if (tokenArg) {
+        const resolved = await resolveToken(tokenArg, contract);
+        if (!resolved.isNative) {
+            const tb = await getTokenBalance(
+                resolved.address, address, provider, network,
+            );
+            result.tokenBalance = tb.balance;
+            result.tokenDecimals = tb.decimals;
+            result.tokenSymbol = tb.symbol;
+            result.tokenAddress = resolved.address;
+        }
+    }
+
+    return result;
+}
 
 export async function balanceCommand(
     args: string[],

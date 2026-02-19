@@ -5,23 +5,19 @@
  * Fixes discrepancies caused by partial failures during VM provisioning.
  */
 
-import { ethers } from "ethers";
+import { getContract, type JSONRpcProvider } from "opnet";
+import type { Network } from "@btc-vision/bitcoin";
 import { execSync, spawnSync } from "child_process";
 import * as fs from "fs";
-import * as yaml from "js-yaml";
 import { getCommand } from "../provisioner";
+import { loadWeb3Config } from "../fund-manager/web3-config";
+import {
+  ACCESS_CREDENTIAL_NFT_ABI,
+  type IAccessCredentialNFT,
+} from "../fund-manager/contract-abis";
 
 const VMS_JSON_PATH = "/var/lib/blockhost/vms.json";
-const WEB3_CONFIG_PATH = "/etc/blockhost/web3-defaults.yaml";
-const BLOCKHOST_CONFIG_PATH = "/etc/blockhost/blockhost.yaml";
 const RECONCILE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-// NFT contract ABI - only what we need
-const NFT_ABI = [
-  "function totalSupply() view returns (uint256)",
-  "function ownerOf(uint256 tokenId) view returns (address)",
-  "function tokenURI(uint256 tokenId) view returns (string)",
-];
 
 interface VmEntry {
   vm_name: string;
@@ -65,28 +61,12 @@ function isProvisioningInProgress(): boolean {
 }
 
 /**
- * Load NFT contract address from config
+ * Load NFT contract address from web3-defaults.yaml
  */
 function loadNftContractAddress(): string | null {
   try {
-    // Try web3-defaults.yaml first
-    if (fs.existsSync(WEB3_CONFIG_PATH)) {
-      const config = yaml.load(fs.readFileSync(WEB3_CONFIG_PATH, "utf8")) as Record<string, unknown>;
-      const blockchain = config.blockchain as Record<string, unknown> | undefined;
-      if (blockchain?.nft_contract) {
-        return blockchain.nft_contract as string;
-      }
-    }
-
-    // Fall back to blockhost.yaml
-    if (fs.existsSync(BLOCKHOST_CONFIG_PATH)) {
-      const config = yaml.load(fs.readFileSync(BLOCKHOST_CONFIG_PATH, "utf8")) as Record<string, unknown>;
-      if (config.nft_contract) {
-        return config.nft_contract as string;
-      }
-    }
-
-    return null;
+    const config = loadWeb3Config();
+    return config.nftContract;
   } catch (err) {
     console.error(`[RECONCILE] Error loading NFT contract address: ${err}`);
     return null;
@@ -175,13 +155,9 @@ function updateGecos(vmName: string, walletAddress: string, nftTokenId: number):
 
 /**
  * Reconcile NFT ownership: detect transfers and update VM GECOS fields.
- * For each active/suspended VM with a minted NFT, compare on-chain ownerOf()
- * with the locally stored owner_wallet. On mismatch, update local state and
- * call the provisioner's update-gecos command. Failed GECOS updates are
- * retried on subsequent reconciliation cycles via the gecos_synced flag.
  */
 async function reconcileOwnership(
-  nftContract: ethers.Contract,
+  nftContract: IAccessCredentialNFT,
   localDb: VmsDatabase,
 ): Promise<void> {
   for (const [vmName, vm] of Object.entries(localDb.vms)) {
@@ -192,14 +168,17 @@ async function reconcileOwnership(
 
     let onChainOwner: string;
     try {
-      onChainOwner = await nftContract.ownerOf(vm.nft_token_id);
+      const result = await nftContract.ownerOf(BigInt(vm.nft_token_id));
+      if ('error' in result) continue;
+      // Address → hex string for comparison
+      onChainOwner = result.properties.owner.toString().toLowerCase();
     } catch {
       // Token may have been burned or contract call failed — skip
       continue;
     }
 
-    const localOwner = vm.owner_wallet || "";
-    if (onChainOwner.toLowerCase() !== localOwner.toLowerCase()) {
+    const localOwner = (vm.owner_wallet || "").toLowerCase();
+    if (onChainOwner !== localOwner) {
       // Ownership transfer detected
       console.log(`[RECONCILE] NFT #${vm.nft_token_id} transferred: ${localOwner} → ${onChainOwner}`);
 
@@ -231,7 +210,7 @@ async function reconcileOwnership(
 /**
  * Run the NFT reconciliation check
  */
-export async function runReconciliation(provider: ethers.Provider): Promise<void> {
+export async function runReconciliation(provider: JSONRpcProvider, network: Network): Promise<void> {
   // Concurrency guard
   if (reconcileInProgress) {
     return;
@@ -260,14 +239,23 @@ export async function runReconciliation(provider: ethers.Provider): Promise<void
     }
 
     // Create contract instance
-    const nftContract = new ethers.Contract(nftAddress, NFT_ABI, provider);
+    const nftContract = getContract<IAccessCredentialNFT>(
+      nftAddress,
+      ACCESS_CREDENTIAL_NFT_ABI,
+      provider,
+      network,
+    );
 
     // Get on-chain total supply
     let onChainSupply: bigint;
     try {
-      onChainSupply = await nftContract.totalSupply();
+      const supplyResult = await nftContract.totalSupply();
+      if ('error' in supplyResult) {
+        console.warn(`[RECONCILE] Could not query totalSupply`);
+        return;
+      }
+      onChainSupply = supplyResult.properties.totalSupply;
     } catch (err) {
-      // Contract might not be deployed or doesn't have totalSupply
       console.warn(`[RECONCILE] Could not query totalSupply: ${err}`);
       return;
     }
@@ -275,7 +263,6 @@ export async function runReconciliation(provider: ethers.Provider): Promise<void
     const onChainCount = Number(onChainSupply);
 
     // Derive local expected next ID from reserved_nft_tokens keys
-    // The next ID would be max(existing keys) + 1, or 0 if no tokens reserved
     let localNextId = 0;
     if (localDb.reserved_nft_tokens) {
       const reservedIds = Object.keys(localDb.reserved_nft_tokens).map(k => parseInt(k, 10));
@@ -288,7 +275,6 @@ export async function runReconciliation(provider: ethers.Provider): Promise<void
     if (onChainCount > localNextId) {
       console.log(`[RECONCILE] Discrepancy detected: on-chain has ${onChainCount} tokens, local max reserved=${localNextId - 1}`);
 
-      // Check each token from localNextId to onChainCount-1
       for (let tokenId = localNextId; tokenId < onChainCount; tokenId++) {
         await reconcileToken(nftContract, localDb, tokenId);
       }
@@ -297,14 +283,13 @@ export async function runReconciliation(provider: ethers.Provider): Promise<void
     // Also check VMs that have reserved tokens but not marked as minted
     for (const [vmName, vm] of Object.entries(localDb.vms)) {
       if (vm.nft_token_id !== undefined && vm.nft_minted !== true) {
-        // Check if this token actually exists on-chain
         try {
-          await nftContract.ownerOf(vm.nft_token_id);
+          const result = await nftContract.ownerOf(BigInt(vm.nft_token_id));
+          if ('error' in result) continue;
           // Token exists on-chain, mark as minted locally
           console.log(`[RECONCILE] Token #${vm.nft_token_id} exists on-chain but not marked minted for ${vmName}`);
 
           if (!markTokenMintedViaPython(vm.nft_token_id, vmName)) {
-            // Fall back to direct update
             vm.nft_minted = true;
             saveVmsDatabase(localDb);
           }
@@ -320,9 +305,9 @@ export async function runReconciliation(provider: ethers.Provider): Promise<void
       for (const [tokenIdStr, tokenInfo] of Object.entries(localDb.reserved_nft_tokens)) {
         const tokenId = parseInt(tokenIdStr, 10);
         if (!tokenInfo.minted && tokenId < onChainCount) {
-          // Check if token exists on-chain
           try {
-            await nftContract.ownerOf(tokenId);
+            const result = await nftContract.ownerOf(BigInt(tokenId));
+            if ('error' in result) continue;
             // Token exists, mark as minted
             console.log(`[RECONCILE] Token #${tokenId} in nft_tokens exists on-chain but not marked minted`);
             tokenInfo.minted = true;
@@ -349,21 +334,21 @@ export async function runReconciliation(provider: ethers.Provider): Promise<void
  * Reconcile a specific token that exists on-chain but may be missing locally
  */
 async function reconcileToken(
-  nftContract: ethers.Contract,
+  nftContract: IAccessCredentialNFT,
   localDb: VmsDatabase,
   tokenId: number
 ): Promise<void> {
   try {
-    // Get token owner from chain
-    const owner = await nftContract.ownerOf(tokenId);
+    const result = await nftContract.ownerOf(BigInt(tokenId));
+    if ('error' in result) return;
+
+    const owner = result.properties.owner.toString().toLowerCase();
 
     // Try to find which VM this token belongs to
     let foundVm: string | null = null;
 
-    // Check VMs by owner wallet
     for (const [vmName, vm] of Object.entries(localDb.vms)) {
-      if (vm.owner_wallet?.toLowerCase() === owner.toLowerCase()) {
-        // Check if this VM doesn't have a token assigned or has this specific token
+      if (vm.owner_wallet?.toLowerCase() === owner) {
         if (vm.nft_token_id === undefined || vm.nft_token_id === tokenId) {
           foundVm = vmName;
           break;
@@ -372,7 +357,7 @@ async function reconcileToken(
     }
 
     if (foundVm) {
-      const vm = localDb.vms[foundVm];
+      const vm = localDb.vms[foundVm]!;
       if (vm.nft_token_id === undefined) {
         console.log(`[RECONCILE] Token #${tokenId} found on-chain for ${foundVm}, assigning locally`);
         vm.nft_token_id = tokenId;

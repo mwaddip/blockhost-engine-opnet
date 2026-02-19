@@ -1,18 +1,23 @@
 /**
- * Fund Manager Module
+ * Fund Manager Module (OPNet)
  *
  * Periodic tasks integrated into the monitor polling loop:
  *  - Fund cycle (every 24h): withdraw from contract → distribute to stakeholders
- *  - Gas check (every 30min): ensure server + hot wallets have enough ETH
+ *  - Gas check (every 30min): ensure server + hot wallets have enough BTC
  *
  * Follows the same pattern as src/reconcile/index.ts
  */
 
-import { ethers } from "ethers";
+import { getContract, type JSONRpcProvider } from "opnet";
+import type { Network } from "@btc-vision/bitcoin";
 import { loadFundManagerConfig, loadRevenueShareConfig } from "./config";
 import { loadAddressbook, ensureHotWallet } from "./addressbook";
 import { loadState, updateState } from "./state";
-import { SUBSCRIPTION_ABI } from "./token-utils";
+import { loadWeb3Config } from "./web3-config";
+import {
+  BLOCKHOST_SUBSCRIPTIONS_ABI,
+  type IBlockhostSubscriptions,
+} from "./contract-abis";
 import { withdrawFromContract } from "./withdrawal";
 import {
   topUpHotWalletGas,
@@ -62,31 +67,21 @@ export function getGasCheckInterval(): number {
 }
 
 /**
- * Create a contract instance for fund-manager operations
- */
-function getContract(contractAddress: string, provider: ethers.Provider): ethers.Contract {
-  return new ethers.Contract(contractAddress, SUBSCRIPTION_ABI, provider);
-}
-
-/**
  * Run the full fund withdrawal and distribution cycle.
  *
  * 1. Withdraw from contract to hot wallet
- * 2. Top up hot wallet gas
- * 3. Top up server stablecoin buffer
+ * 2. Top up hot wallet gas (server → hot BTC if hot is low)
+ * 3. Top up server stablecoin buffer (hot → server tokens)
  * 4. Revenue shares (if enabled)
  * 5. Remainder to admin
  */
-export async function runFundCycle(provider: ethers.Provider): Promise<void> {
+export async function runFundCycle(provider: JSONRpcProvider, network: Network): Promise<void> {
   if (fundCycleInProgress) return;
   fundCycleInProgress = true;
 
   try {
-    const contractAddress = process.env.BLOCKHOST_CONTRACT;
-    if (!contractAddress) {
-      console.error("[FUND] BLOCKHOST_CONTRACT not set, skipping fund cycle");
-      return;
-    }
+    const web3Config = loadWeb3Config();
+    const contractAddress = web3Config.subscriptionsContract;
 
     console.log("[FUND] Starting fund cycle...");
 
@@ -98,23 +93,28 @@ export async function runFundCycle(provider: ethers.Provider): Promise<void> {
     }
     book = await ensureHotWallet(book);
 
-    const contract = getContract(contractAddress, provider);
+    const contract = getContract<IBlockhostSubscriptions>(
+      contractAddress,
+      BLOCKHOST_SUBSCRIPTIONS_ABI,
+      provider,
+      network,
+    );
 
     // Step 1: Withdraw from contract to hot wallet
-    await withdrawFromContract(book, config, provider, contract);
+    await withdrawFromContract(book, config, contract, contractAddress, provider, network);
 
     // Step 2: Top up hot wallet gas (server → hot)
-    await topUpHotWalletGas(book, config, provider, contract);
+    await topUpHotWalletGas(book, config, provider, contract, network);
 
     // Step 3: Top up server stablecoin buffer (hot → server)
-    await topUpServerStablecoinBuffer(book, config, provider, contract);
+    await topUpServerStablecoinBuffer(book, config, provider, contract, network);
 
     // Step 4: Revenue shares (hot → dev/broker)
     const revenueConfig = loadRevenueShareConfig();
-    await distributeRevenueShares(book, revenueConfig, provider, contract);
+    await distributeRevenueShares(book, revenueConfig, provider, contract, network);
 
     // Step 5: Remainder to admin (hot → admin)
-    await sendRemainderToAdmin(book, provider, contract);
+    await sendRemainderToAdmin(book, provider, contract, network);
 
     console.log("[FUND] Fund cycle complete");
   } catch (err) {
@@ -128,26 +128,31 @@ export async function runFundCycle(provider: ethers.Provider): Promise<void> {
 /**
  * Run the gas balance check and swap if needed.
  */
-export async function runGasCheck(provider: ethers.Provider): Promise<void> {
+export async function runGasCheck(provider: JSONRpcProvider, network: Network): Promise<void> {
   if (gasCheckInProgress) return;
   gasCheckInProgress = true;
 
   try {
-    const contractAddress = process.env.BLOCKHOST_CONTRACT;
-    if (!contractAddress) return;
+    const web3Config = loadWeb3Config();
+    const contractAddress = web3Config.subscriptionsContract;
 
     const book = loadAddressbook();
     if (Object.keys(book).length === 0) return;
 
-    const contract = getContract(contractAddress, provider);
+    const contract = getContract<IBlockhostSubscriptions>(
+      contractAddress,
+      BLOCKHOST_SUBSCRIPTIONS_ABI,
+      provider,
+      network,
+    );
 
-    // Top up hot wallet ETH from server if low
+    // Top up hot wallet BTC from server if low
     if (book.hot) {
-      await topUpHotWalletGas(book, config, provider, contract);
+      await topUpHotWalletGas(book, config, provider, contract, network);
     }
 
-    // Swap USDC→ETH for server wallet if low
-    await checkAndSwapGas(book, config, provider, contract);
+    // Check server BTC and swap if needed
+    await checkAndSwapGas(book, config, provider, contract, network);
   } catch (err) {
     console.error(`[GAS] Error during gas check: ${err}`);
   } finally {

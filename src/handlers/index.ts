@@ -3,15 +3,14 @@
  * Calls blockhost-provisioner-proxmox scripts to provision/manage VMs
  */
 
-import { ethers } from "ethers";
-import { spawn, execFileSync } from "child_process";
+import { spawn } from "child_process";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 import { getCommand } from "../provisioner";
+import { eciesDecrypt, symmetricEncrypt, loadServerPrivateKey } from "../crypto";
 
 // Paths on the server
 const WORKING_DIR = "/var/lib/blockhost";
-const SERVER_PRIVATE_KEY_FILE = "/etc/blockhost/server.key";
 const BLOCKHOST_CONFIG_FILE = "/etc/blockhost/blockhost.yaml";
 
 // Load static publicSecret from config (same for all users)
@@ -28,20 +27,18 @@ function getPublicSecret(): string {
 export interface SubscriptionCreatedEvent {
   subscriptionId: bigint;
   planId: bigint;
-  subscriber: string;
+  subscriber: string;         // 0x + 64 hex (32-byte OPNet address)
   expiresAt: bigint;
-  paidAmount: bigint;
-  paymentToken: string;
-  userEncrypted: string; // Hex-encoded encrypted connection details
+  paidAmount: bigint;         // Amount in payment token base units
+  userEncrypted: string;      // Hex-encoded ECIES ciphertext
 }
 
 export interface SubscriptionExtendedEvent {
   subscriptionId: bigint;
   planId: bigint;
-  extendedBy: string;
+  extendedBy: string;         // 0x + 64 hex (32-byte OPNet address)
   newExpiresAt: bigint;
-  paidAmount: bigint;
-  paymentToken: string;
+  paidAmount: bigint;         // Amount in payment token base units
 }
 
 export interface SubscriptionCancelledEvent {
@@ -81,28 +78,21 @@ function calculateExpiryDays(expiresAt: bigint): number {
 }
 
 /**
- * Decrypt userEncrypted data using the server's private key
- * Returns the decrypted user signature, or null if decryption fails
+ * Decrypt userEncrypted data using the server's private key (native ECIES).
+ * Returns the decrypted user signature, or null if decryption fails.
  *
- * For testing: if the data looks like a raw signature (0x + 130 hex chars), use it directly
+ * For testing: if the data looks like a raw signature (0x + 130 hex chars), use it directly.
  */
 function decryptUserSignature(userEncrypted: string): string | null {
   // Check if it's a raw signature (65 bytes = 130 hex chars + 0x prefix)
-  // Ethereum signatures are 65 bytes: r (32) + s (32) + v (1)
   if (userEncrypted.startsWith("0x") && userEncrypted.length === 132) {
     console.log("[INFO] Using raw signature (no decryption needed)");
     return userEncrypted;
   }
 
-  // Otherwise, try to decrypt with server's private key
   try {
-    const result = execFileSync(
-      "pam_web3_tool",
-      ["decrypt", "--private-key-file", SERVER_PRIVATE_KEY_FILE, "--ciphertext", userEncrypted],
-      { encoding: "utf8", timeout: 10000 }
-    );
-    // Strip "Decrypted: " prefix if present
-    return result.trim().replace(/^Decrypted:\s*/, '');
+    const privateKey = loadServerPrivateKey();
+    return eciesDecrypt(privateKey, userEncrypted);
   } catch (err) {
     console.error(`[ERROR] Failed to decrypt user signature: ${err}`);
     return null;
@@ -153,7 +143,7 @@ interface VmCreateSummary {
 function parseVmSummary(stdout: string): VmCreateSummary | null {
   const lines = stdout.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (line.startsWith("{")) {
       try {
         return JSON.parse(line) as VmCreateSummary;
@@ -166,7 +156,7 @@ function parseVmSummary(stdout: string): VmCreateSummary | null {
 }
 
 /**
- * Encrypt connection details using the user's signature (symmetric encryption).
+ * Encrypt connection details using the user's signature (native SHAKE256 + AES-GCM).
  * Returns the encrypted hex string and public secret, or null on failure.
  */
 function encryptConnectionDetails(
@@ -181,20 +171,9 @@ function encryptConnectionDetails(
   });
 
   try {
-    const result = execFileSync("pam_web3_tool", [
-      "encrypt-symmetric",
-      "--signature", userSignature,
-      "--plaintext", connectionDetails,
-    ], { encoding: "utf8", timeout: 10000 });
-
-    const hexMatch = result.match(/0x[0-9a-fA-F]+/);
-    if (!hexMatch) {
-      console.error("[ERROR] No hex data in encrypt-symmetric output");
-      return null;
-    }
-
+    const encrypted = symmetricEncrypt(userSignature, connectionDetails);
     return {
-      userEncrypted: hexMatch[0],
+      userEncrypted: encrypted,
       publicSecret: getPublicSecret(),
     };
   } catch (err) {
@@ -241,8 +220,7 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
   console.log(`Plan ID: ${event.planId}`);
   console.log(`Subscriber: ${event.subscriber}`);
   console.log(`Expires At: ${new Date(Number(event.expiresAt) * 1000).toISOString()}`);
-  console.log(`Paid Amount: ${ethers.formatUnits(event.paidAmount, 6)} (assuming 6 decimals)`);
-  console.log(`Payment Token: ${event.paymentToken}`);
+  console.log(`Paid Amount: ${Number(event.paidAmount)} sats`);
   console.log(`User Encrypted: ${event.userEncrypted.length > 10 ? event.userEncrypted.slice(0, 10) + "..." : event.userEncrypted}`);
   console.log("------------------------------------------");
   console.log(`Provisioning VM: ${vmName}`);
@@ -346,8 +324,7 @@ export async function handleSubscriptionExtended(event: SubscriptionExtendedEven
   console.log(`Plan ID: ${event.planId}`);
   console.log(`Extended By: ${event.extendedBy}`);
   console.log(`New Expires At: ${newExpiryDate.toISOString()}`);
-  console.log(`Paid Amount: ${ethers.formatUnits(event.paidAmount, 6)} (assuming 6 decimals)`);
-  console.log(`Payment Token: ${event.paymentToken}`);
+  console.log(`Paid Amount: ${Number(event.paidAmount)} sats`);
   console.log("-------------------------------------------");
   console.log(`Updating expiry for VM: ${vmName}`);
 
