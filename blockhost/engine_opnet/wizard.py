@@ -1,0 +1,1342 @@
+"""
+OPNet engine wizard plugin for BlockHost installer.
+
+Provides:
+- Flask Blueprint with /wizard/opnet route and blockchain API routes
+- Pre-provisioner finalization steps: wallet, contracts, chain_config
+- Post-nginx finalization steps: mint_nft, plan, revenue_share
+- Summary data and template for the summary page
+"""
+
+import grp
+import json
+import os
+import re
+import secrets
+import subprocess
+import threading
+from pathlib import Path
+from typing import Optional
+
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+
+blueprint = Blueprint(
+    "engine_opnet",
+    __name__,
+    template_folder="templates",
+)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+NETWORK_NAMES = {
+    "regtest": "Regtest (local)",
+    "testnet": "Testnet",
+    "mainnet": "Bitcoin Mainnet",
+}
+
+NETWORK_RPC = {
+    "regtest": "https://regtest.opnet.org",
+    "testnet": "https://testnet.opnet.org",
+    "mainnet": "https://mainnet.opnet.org",
+}
+
+CONFIG_DIR = Path("/etc/blockhost")
+
+# OPNet addresses: 0x + 64 hex (32-byte internal)
+ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+# Async deploy jobs (module-level, shared across requests)
+_deploy_jobs: dict = {}
+
+
+# ---------------------------------------------------------------------------
+# Address validation
+# ---------------------------------------------------------------------------
+
+
+def validate_address(address: str) -> bool:
+    """Validate an OPNet address (0x + 64 hex chars)."""
+    if not address or not isinstance(address, str):
+        return False
+    return bool(ADDRESS_RE.match(address.strip()))
+
+
+# ---------------------------------------------------------------------------
+# Wizard Route
+# ---------------------------------------------------------------------------
+
+
+@blueprint.route("/wizard/opnet", methods=["GET", "POST"])
+def wizard_opnet():
+    """OPNet blockchain configuration step."""
+    if request.method == "POST":
+        network = request.form.get("network", "regtest").strip()
+        rpc_url = request.form.get("rpc_url", "").strip()
+        if not rpc_url:
+            rpc_url = NETWORK_RPC.get(network, NETWORK_RPC["regtest"])
+
+        session["blockchain"] = {
+            "network": network,
+            "rpc_url": rpc_url,
+            "wallet_mode": request.form.get("wallet_mode", "generate"),
+            "deployer_mnemonic": request.form.get("deployer_mnemonic", "").strip(),
+            "deployer_address": request.form.get("deployer_address", "").strip(),
+            "contract_mode": request.form.get("contract_mode", "deploy"),
+            "nft_contract": request.form.get("nft_contract", "").strip(),
+            "subscription_contract": request.form.get(
+                "subscription_contract", ""
+            ).strip(),
+            "payment_token": request.form.get("payment_token", "").strip(),
+            "plan_name": request.form.get("plan_name", "Basic VM").strip(),
+            "plan_price_cents": int(request.form.get("plan_price_cents", 50)),
+            "revenue_share_enabled": request.form.get("revenue_share_enabled") == "on",
+            "revenue_share_percent": float(
+                request.form.get("revenue_share_percent", 1.0)
+            ),
+            "revenue_share_dev": request.form.get("revenue_share_dev") == "on",
+            "revenue_share_broker": request.form.get("revenue_share_broker") == "on",
+        }
+
+        # Navigate to next wizard step
+        try:
+            nav = current_app.jinja_env.globals.get("wizard_nav")
+            if nav:
+                next_info = nav("opnet")
+                if next_info and next_info.get("next"):
+                    return redirect(url_for(next_info["next"]))
+        except Exception:
+            pass
+        return redirect(url_for("wizard_ipv6"))
+
+    return render_template(
+        "engine_opnet/blockchain.html",
+        network_names=NETWORK_NAMES,
+        network_rpc=NETWORK_RPC,
+        blockchain=session.get("blockchain", {}),
+    )
+
+
+# ---------------------------------------------------------------------------
+# API Routes
+# ---------------------------------------------------------------------------
+
+
+@blueprint.route("/api/blockchain/generate-wallet", methods=["POST"])
+def api_generate_wallet():
+    """Generate a new OPNet wallet (mnemonic-based).
+
+    Uses `bw` CLI or falls back to Node.js script.
+    Returns mnemonic phrase and P2TR address.
+    """
+    try:
+        # Generate via ab new (which uses root agent → generateWallet)
+        # For the installer context, generate a mnemonic directly
+        result = subprocess.run(
+            [
+                "npx", "tsx", "-e",
+                "import{Mnemonic,AddressTypes,MLDSASecurityLevel}"
+                "from'@btc-vision/transaction';"
+                "import{networks}from'@btc-vision/bitcoin';"
+                "import{generateMnemonic}from'bip39';"
+                "const m=generateMnemonic();"
+                "const w=new Mnemonic(m,'',networks.regtest,"
+                "MLDSASecurityLevel.LEVEL2)"
+                ".deriveOPWallet(AddressTypes.P2TR,0);"
+                "console.log(JSON.stringify({mnemonic:m,address:w.p2tr}));",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd="/opt/blockhost",
+        )
+
+        if result.returncode != 0:
+            return jsonify({"error": f"Wallet generation failed: {result.stderr}"}), 500
+
+        data = json.loads(result.stdout.strip())
+        return jsonify({
+            "mnemonic": data["mnemonic"],
+            "address": data["address"],
+        })
+    except json.JSONDecodeError:
+        return jsonify({"error": "Could not parse wallet output"}), 500
+    except FileNotFoundError:
+        return jsonify({"error": "npx/tsx not found — is Node.js installed?"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Wallet generation timed out"}), 500
+
+
+@blueprint.route("/api/blockchain/validate-mnemonic", methods=["POST"])
+def api_validate_mnemonic():
+    """Validate a mnemonic phrase and return its P2TR address."""
+    data = request.get_json()
+    mnemonic_phrase = (data or {}).get("mnemonic", "").strip()
+
+    if not mnemonic_phrase:
+        return jsonify({"error": "Mnemonic phrase required"}), 400
+
+    words = mnemonic_phrase.split()
+    if len(words) not in (12, 15, 18, 21, 24):
+        return jsonify({"error": f"Invalid word count ({len(words)}), expected 12-24"}), 400
+
+    # Validate mnemonic contains only safe characters (BIP39: lowercase words + spaces)
+    if not re.match(r"^[a-z ]+$", mnemonic_phrase):
+        return jsonify({"error": "Mnemonic must contain only lowercase words"}), 400
+
+    try:
+        result = subprocess.run(
+            [
+                "npx", "tsx", "-e",
+                "import{Mnemonic,AddressTypes,MLDSASecurityLevel}"
+                "from'@btc-vision/transaction';"
+                "import{networks}from'@btc-vision/bitcoin';"
+                "const m=process.env.MNEMONIC;"
+                "const w=new Mnemonic(m,'',networks.regtest,"
+                "MLDSASecurityLevel.LEVEL2)"
+                ".deriveOPWallet(AddressTypes.P2TR,0);"
+                "console.log(JSON.stringify({address:w.p2tr}));",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd="/opt/blockhost",
+            env={**os.environ, "MNEMONIC": mnemonic_phrase},
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            addr_data = json.loads(result.stdout.strip())
+            return jsonify({"address": addr_data["address"], "mnemonic": mnemonic_phrase})
+        else:
+            return jsonify({"error": result.stderr.strip() or "Invalid mnemonic"}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "npx/tsx not found"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Validation timed out"}), 500
+
+
+@blueprint.route("/api/blockchain/balance")
+def api_balance():
+    """Check wallet BTC balance via OPNet RPC."""
+    address = request.args.get("address", "").strip()
+    rpc_url = request.args.get("rpc_url", "").strip()
+
+    if not address or not rpc_url:
+        return jsonify({"error": "address and rpc_url required"}), 400
+
+    import urllib.request
+    import urllib.error
+
+    try:
+        payload = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "btc_getBalance",
+            "params": [address, True],
+            "id": 1,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            rpc_url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "BlockHost-Installer/1.0",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        if "error" in data:
+            return jsonify({"error": data["error"].get("message", "RPC error")}), 400
+
+        balance_sats = int(data.get("result", "0"), 16) if isinstance(data.get("result"), str) else int(data.get("result", 0))
+        balance_btc = balance_sats / 1e8
+
+        return jsonify({
+            "balance_sats": str(balance_sats),
+            "balance_btc": f"{balance_btc:.8f}",
+            "has_funds": balance_sats > 0,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@blueprint.route("/api/blockchain/block-info")
+def api_block_info():
+    """Get current block height and time since last block."""
+    rpc_url = request.args.get("rpc_url", "").strip()
+    if not rpc_url:
+        return jsonify({"error": "rpc_url required"}), 400
+
+    import urllib.request
+    import time
+
+    try:
+        # Get block number
+        payload = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "btc_blockNumber",
+            "params": [],
+            "id": 1,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            rpc_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        if "error" in data or "result" not in data:
+            return jsonify({"error": "Could not fetch block number"}), 500
+
+        raw_height = data["result"]
+        height = (
+            int(raw_height, 16) if isinstance(raw_height, str) else int(raw_height)
+        )
+
+        # Get block details for timestamp
+        block_time: Optional[int] = None
+        try:
+            payload2 = json.dumps({
+                "jsonrpc": "2.0",
+                "method": "btc_getBlockByNumber",
+                "params": [raw_height, False],
+                "id": 2,
+            }).encode("utf-8")
+
+            req2 = urllib.request.Request(
+                rpc_url,
+                data=payload2,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            with urllib.request.urlopen(req2, timeout=10) as resp2:
+                data2 = json.loads(resp2.read().decode("utf-8"))
+
+            blk = data2.get("result")
+            if blk:
+                # Try common timestamp field names
+                for key in ("timestamp", "time", "medianTime"):
+                    ts = blk.get(key)
+                    if ts is not None:
+                        block_time = (
+                            int(ts, 16) if isinstance(ts, str) else int(ts)
+                        )
+                        break
+        except Exception:
+            pass
+
+        result: dict = {"height": height}
+        if block_time is not None:
+            result["block_time"] = block_time
+            result["block_age_secs"] = int(time.time()) - block_time
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@blueprint.route("/api/blockchain/tx-status")
+def api_tx_status():
+    """Check transaction confirmation status."""
+    txid = request.args.get("txid", "").strip()
+    rpc_url = request.args.get("rpc_url", "").strip()
+
+    if not txid or not rpc_url:
+        return jsonify({"error": "txid and rpc_url required"}), 400
+
+    import urllib.request
+
+    try:
+        payload = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "btc_getTransactionReceipt",
+            "params": [txid],
+            "id": 1,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            rpc_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        receipt = data.get("result")
+        if receipt and receipt.get("blockNumber"):
+            raw_bn = receipt["blockNumber"]
+            block_num = (
+                int(raw_bn, 16) if isinstance(raw_bn, str) else int(raw_bn)
+            )
+            return jsonify({"status": "confirmed", "block": block_num})
+
+        return jsonify({"status": "pending"})
+    except Exception:
+        return jsonify({"status": "unknown"})
+
+
+@blueprint.route("/api/blockchain/deploy", methods=["POST"])
+def api_deploy():
+    """Start async contract deployment."""
+    data = request.get_json() or {}
+    deployer_mnemonic = data.get("deployer_mnemonic", "").strip()
+    rpc_url = data.get("rpc_url", "").strip()
+    payment_token = data.get("payment_token", "").strip()
+
+    if not deployer_mnemonic or not rpc_url:
+        return jsonify({"error": "deployer_mnemonic and rpc_url required"}), 400
+
+    job_id = f"deploy-{secrets.token_hex(4)}"
+    _deploy_jobs[job_id] = {
+        "status": "running",
+        "message": "Starting contract deployment...",
+        "nft_contract": None,
+        "subscription_contract": None,
+    }
+
+    thread = threading.Thread(
+        target=_run_deploy,
+        args=(job_id, deployer_mnemonic, rpc_url, payment_token),
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@blueprint.route("/api/blockchain/deploy-status/<job_id>")
+def api_deploy_status(job_id):
+    """Poll deployment status."""
+    job = _deploy_jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job)
+
+
+@blueprint.route("/api/blockchain/set-contracts", methods=["POST"])
+def api_set_contracts():
+    """Store existing contract addresses in session."""
+    data = request.get_json() or {}
+    nft = data.get("nft_contract", "").strip()
+    sub = data.get("subscription_contract", "").strip()
+
+    if nft and not validate_address(nft):
+        return jsonify({"error": "Invalid NFT contract address (0x + 64 hex)"}), 400
+    if sub and not validate_address(sub):
+        return jsonify({"error": "Invalid subscription contract address (0x + 64 hex)"}), 400
+
+    blockchain = session.get("blockchain", {})
+    if nft:
+        blockchain["nft_contract"] = nft
+    if sub:
+        blockchain["subscription_contract"] = sub
+    session["blockchain"] = blockchain
+
+    return jsonify({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# Deploy helper (runs in background thread)
+# ---------------------------------------------------------------------------
+
+
+def _run_deploy(
+    job_id: str,
+    deployer_mnemonic: str,
+    rpc_url: str,
+    payment_token: str,
+):
+    """Deploy NFT and subscription contracts in background."""
+    job = _deploy_jobs[job_id]
+
+    try:
+        # Write mnemonic for the deploy script
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        mnemonic_file = CONFIG_DIR / "deployer.mnemonic"
+        mnemonic_file.write_text(deployer_mnemonic)
+        mnemonic_file.chmod(0o600)
+
+        env = {
+            **os.environ,
+            "OPNET_MNEMONIC": deployer_mnemonic,
+            "OPNET_RPC_URL": rpc_url,
+        }
+        if payment_token:
+            env["OPNET_PAYMENT_TOKEN"] = payment_token
+
+        deploy_script = Path("/usr/bin/blockhost-deploy-contracts")
+        if not deploy_script.exists():
+            # Development fallback
+            dev_script = Path("/opt/blockhost/scripts/deploy-contracts")
+            if dev_script.exists():
+                deploy_script = dev_script
+
+        if not deploy_script.exists():
+            job["status"] = "failed"
+            job["message"] = "blockhost-deploy-contracts not found"
+            return
+
+        job["message"] = "Deploying contracts..."
+        result = subprocess.run(
+            [str(deploy_script)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+        )
+
+        if result.returncode != 0:
+            job["status"] = "failed"
+            job["message"] = f"Deployment failed: {result.stderr or result.stdout}"
+            return
+
+        # Parse pubkeys from stdout (one per line, 0x-prefixed)
+        pubkeys = [
+            line.strip()
+            for line in result.stdout.strip().split("\n")
+            if line.strip().startswith("0x")
+        ]
+
+        if len(pubkeys) >= 2:
+            job["nft_contract"] = pubkeys[0]
+            job["subscription_contract"] = pubkeys[1]
+            job["status"] = "completed"
+            job["message"] = "Contracts deployed successfully"
+        elif len(pubkeys) == 1:
+            job["nft_contract"] = pubkeys[0]
+            job["status"] = "completed"
+            job["message"] = "NFT contract deployed (subscription may need payment token)"
+        else:
+            job["status"] = "failed"
+            job["message"] = f"Could not parse contract pubkeys from output: {result.stdout}"
+
+    except subprocess.TimeoutExpired:
+        job["status"] = "failed"
+        job["message"] = "Deployment timed out (10 minutes)"
+    except Exception as e:
+        job["status"] = "failed"
+        job["message"] = str(e)
+
+
+# ---------------------------------------------------------------------------
+# Summary & UI
+# ---------------------------------------------------------------------------
+
+
+def get_ui_params(session_data: dict) -> dict:
+    """Return OPNet-specific UI parameters for wizard templates."""
+    blockchain = session_data.get("blockchain", {})
+    network = blockchain.get("network", "regtest")
+    return {
+        "network_name": NETWORK_NAMES.get(network, network),
+        "network": network,
+    }
+
+
+def validate_signature(sig: str) -> bool:
+    """Validate signature format (0x-prefixed hex)."""
+    return bool(sig and sig.startswith("0x"))
+
+
+def decrypt_config(signature: str, ciphertext: str) -> dict:
+    """Decrypt config backup using nft_tool.
+
+    Args:
+        signature: Admin wallet signature (0x-prefixed hex)
+        ciphertext: Encrypted config file content (0x-prefixed hex)
+
+    Returns:
+        Parsed config dict
+
+    Raises:
+        ValueError: On decryption failure or invalid content
+        FileNotFoundError: If nft_tool not installed
+    """
+    import yaml
+
+    if not ciphertext.startswith("0x"):
+        raise ValueError("Invalid config file (expected hex ciphertext)")
+
+    result = subprocess.run(
+        [
+            "nft_tool", "decrypt-symmetric",
+            "--signature", signature,
+            "--ciphertext", ciphertext,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise ValueError("Decryption failed — wrong wallet or corrupted file")
+
+    config = yaml.safe_load(result.stdout)
+    if not isinstance(config, dict):
+        raise ValueError("Decrypted content is not valid config")
+    return config
+
+
+def encrypt_config(signature: str, plaintext: str) -> str:
+    """Encrypt config for backup download using nft_tool.
+
+    Args:
+        signature: Admin wallet signature (0x-prefixed hex)
+        plaintext: YAML-serialized config string
+
+    Returns:
+        Hex ciphertext string (0x-prefixed)
+
+    Raises:
+        ValueError: On encryption failure
+        FileNotFoundError: If nft_tool not installed
+    """
+    result = subprocess.run(
+        [
+            "nft_tool", "encrypt-symmetric",
+            "--signature", signature,
+            "--plaintext", plaintext,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"Encryption failed: {result.stderr}")
+
+    output = result.stdout.strip()
+    if not output.startswith("0x"):
+        raise ValueError("Could not parse encrypted output")
+    return output
+
+
+def get_summary_data(session_data: dict) -> dict:
+    """Return blockchain summary data for the summary page."""
+    blockchain = session_data.get("blockchain", {})
+    network = blockchain.get("network", "regtest")
+    return {
+        "network_name": NETWORK_NAMES.get(network, network),
+        "network": network,
+        "rpc_url": blockchain.get("rpc_url", ""),
+        "deployer_address": blockchain.get("deployer_address", ""),
+        "contract_mode": blockchain.get("contract_mode", "deploy"),
+        "nft_contract": blockchain.get("nft_contract", ""),
+        "subscription_contract": blockchain.get("subscription_contract", ""),
+        "payment_token": blockchain.get("payment_token", ""),
+        "plan_name": blockchain.get("plan_name", "Basic VM"),
+        "plan_price_cents": blockchain.get("plan_price_cents", 50),
+        "revenue_share_enabled": blockchain.get("revenue_share_enabled", False),
+    }
+
+
+def get_summary_template() -> str:
+    """Return the template name for the engine summary section."""
+    return "engine_opnet/summary_section.html"
+
+
+def get_progress_steps_meta() -> list[dict]:
+    """Return step metadata for the progress UI."""
+    pre = [
+        {"id": "wallet", "label": "Setting up deployer wallet"},
+        {"id": "contracts", "label": "Deploying smart contracts"},
+        {"id": "chain_config", "label": "Writing configuration files"},
+    ]
+    post = [
+        {"id": "mint_nft", "label": "Minting admin credential NFT"},
+        {"id": "plan", "label": "Creating subscription plan"},
+        {"id": "revenue_share", "label": "Configuring revenue sharing"},
+    ]
+    return pre + post
+
+
+# ---------------------------------------------------------------------------
+# Finalization Steps (pre-provisioner)
+# ---------------------------------------------------------------------------
+
+
+def get_finalization_steps() -> list[tuple]:
+    """Return pre-provisioner finalization steps.
+
+    Each tuple: (step_id, display_name, callable[, hint])
+    """
+    return [
+        ("wallet", "Setting up deployer wallet", finalize_wallet),
+        (
+            "contracts",
+            "Deploying smart contracts",
+            finalize_contracts,
+            "(may take several minutes — two-phase Bitcoin transactions)",
+        ),
+        ("chain_config", "Writing configuration files", finalize_chain_config),
+    ]
+
+
+def get_post_finalization_steps() -> list[tuple]:
+    """Return post-nginx finalization steps.
+
+    These run after provisioner, ipv6, https, signup, and nginx steps.
+    """
+    return [
+        ("mint_nft", "Minting admin credential NFT", finalize_mint_nft),
+        ("plan", "Creating subscription plan", finalize_plan),
+        ("revenue_share", "Configuring revenue sharing", finalize_revenue_share),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Helpers (private)
+# ---------------------------------------------------------------------------
+
+
+def _set_blockhost_ownership(path, mode=0o640):
+    """Set file to root:blockhost with given mode."""
+    try:
+        from installer.web.utils import set_blockhost_ownership
+
+        set_blockhost_ownership(path, mode)
+    except ImportError:
+        os.chmod(str(path), mode)
+        try:
+            gid = grp.getgrnam("blockhost").gr_gid
+            os.chown(str(path), 0, gid)
+        except KeyError:
+            pass
+
+
+def _write_yaml(path: Path, data: dict):
+    """Write data to YAML file."""
+    try:
+        from installer.web.utils import write_yaml
+
+        write_yaml(path, data)
+    except ImportError:
+        try:
+            import yaml
+
+            path.write_text(yaml.safe_dump(data, default_flow_style=False))
+        except ImportError:
+            # Minimal fallback
+            lines: list[str] = []
+            _dict_to_yaml(data, lines, 0)
+            path.write_text("\n".join(lines) + "\n")
+
+
+def _dict_to_yaml(data: dict, lines: list, indent: int):
+    """Simple dict to YAML converter."""
+    prefix = "  " * indent
+    for key, value in data.items():
+        if isinstance(value, dict):
+            lines.append(f"{prefix}{key}:")
+            _dict_to_yaml(value, lines, indent + 1)
+        elif isinstance(value, list):
+            lines.append(f"{prefix}{key}:")
+            for item in value:
+                if isinstance(item, dict):
+                    lines.append(f"{prefix}  -")
+                    _dict_to_yaml(item, lines, indent + 2)
+                else:
+                    lines.append(f"{prefix}  - {item}")
+        elif value is None:
+            lines.append(f"{prefix}{key}: null")
+        elif isinstance(value, bool):
+            lines.append(f"{prefix}{key}: {str(value).lower()}")
+        elif isinstance(value, (int, float)):
+            lines.append(f"{prefix}{key}: {value}")
+        else:
+            lines.append(f'{prefix}{key}: "{value}"')
+
+
+def _discover_bridge() -> str:
+    """Read bridge name from first-boot marker or scan /sys/class/net."""
+    bridge_file = Path("/run/blockhost/bridge")
+    if bridge_file.exists():
+        name = bridge_file.read_text().strip()
+        if name:
+            return name
+    for p in Path("/sys/class/net").iterdir():
+        if (p / "bridge").is_dir():
+            return p.name
+    return "br0"
+
+
+def _bw_env(blockchain: dict) -> dict:
+    """Build environment for bw CLI calls."""
+    return {
+        **os.environ,
+        "BLOCKHOST_CONFIG_DIR": str(CONFIG_DIR),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pre-finalization step functions
+# ---------------------------------------------------------------------------
+
+
+def finalize_wallet(config: dict) -> tuple[bool, Optional[str]]:
+    """Write deployer mnemonic to /etc/blockhost/deployer.mnemonic.
+
+    Idempotent: skips write if file exists with matching content.
+    """
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        blockchain = config.get("blockchain", {})
+        mnemonic = blockchain.get("deployer_mnemonic", "")
+
+        if not mnemonic:
+            return False, "No deployer mnemonic in configuration"
+
+        words = mnemonic.split()
+        if len(words) not in (12, 15, 18, 21, 24):
+            return False, f"Invalid mnemonic word count ({len(words)})"
+
+        mnemonic_file = CONFIG_DIR / "deployer.mnemonic"
+
+        # Idempotent: skip if same mnemonic already written
+        if mnemonic_file.exists() and mnemonic_file.read_text().strip() == mnemonic:
+            config["_step_result_wallet"] = {
+                "address": blockchain.get("deployer_address", ""),
+            }
+            return True, None
+
+        mnemonic_file.write_text(mnemonic)
+        _set_blockhost_ownership(mnemonic_file, 0o600)
+
+        config["_step_result_wallet"] = {
+            "address": blockchain.get("deployer_address", ""),
+        }
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def finalize_contracts(config: dict) -> tuple[bool, Optional[str]]:
+    """Deploy or verify smart contracts.
+
+    For contract_mode == 'deploy': use blockhost-deploy-contracts.
+    For contract_mode == 'existing': verify contracts exist via `is contract`.
+
+    Idempotent: skips deployment if contracts already recorded in config.
+    """
+    try:
+        blockchain = config.get("blockchain", {})
+        contract_mode = blockchain.get("contract_mode", "deploy")
+        rpc_url = blockchain.get("rpc_url", "")
+
+        if contract_mode == "existing":
+            nft = blockchain.get("nft_contract", "")
+            sub = blockchain.get("subscription_contract", "")
+
+            if not nft or not sub:
+                return False, "Contract addresses required for existing mode"
+
+            for label, addr in [("NFT", nft), ("Subscription", sub)]:
+                if not validate_address(addr):
+                    return False, f"Invalid {label} address: {addr}"
+                ok = _verify_contract_exists(addr)
+                if not ok:
+                    return False, f"{label} contract not found at {addr}"
+
+            config["_step_result_contracts"] = {
+                "nft_contract": nft,
+                "subscription_contract": sub,
+            }
+            return True, None
+
+        # Deploy mode
+        nft = blockchain.get("nft_contract", "")
+        sub = blockchain.get("subscription_contract", "")
+        if nft and sub:
+            # Already deployed (idempotent)
+            config["_step_result_contracts"] = {
+                "nft_contract": nft,
+                "subscription_contract": sub,
+            }
+            return True, None
+
+        mnemonic = blockchain.get("deployer_mnemonic", "")
+        mnemonic_file = CONFIG_DIR / "deployer.mnemonic"
+        if not mnemonic_file.exists():
+            if mnemonic:
+                mnemonic_file.write_text(mnemonic)
+                _set_blockhost_ownership(mnemonic_file, 0o600)
+            else:
+                return False, "Deployer mnemonic not available"
+
+        payment_token = blockchain.get("payment_token", "")
+
+        env = {
+            **os.environ,
+            "OPNET_MNEMONIC": mnemonic,
+            "OPNET_RPC_URL": rpc_url,
+        }
+        if payment_token:
+            env["OPNET_PAYMENT_TOKEN"] = payment_token
+
+        deploy_script = Path("/usr/bin/blockhost-deploy-contracts")
+        if not deploy_script.exists():
+            dev_script = Path("/opt/blockhost/scripts/deploy-contracts")
+            if dev_script.exists():
+                deploy_script = dev_script
+            else:
+                return False, "blockhost-deploy-contracts not found"
+
+        result = subprocess.run(
+            [str(deploy_script)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+        )
+
+        if result.returncode != 0:
+            return False, f"Contract deployment failed: {result.stderr or result.stdout}"
+
+        pubkeys = [
+            line.strip()
+            for line in result.stdout.strip().split("\n")
+            if line.strip().startswith("0x")
+        ]
+
+        if len(pubkeys) >= 2:
+            blockchain["nft_contract"] = pubkeys[0]
+            blockchain["subscription_contract"] = pubkeys[1]
+            config["blockchain"] = blockchain
+            config["_step_result_contracts"] = {
+                "nft_contract": pubkeys[0],
+                "subscription_contract": pubkeys[1],
+            }
+            return True, None
+
+        return False, f"Expected 2 contract pubkeys, got {len(pubkeys)}"
+
+    except subprocess.TimeoutExpired:
+        return False, "Contract deployment timed out (10 minutes)"
+    except Exception as e:
+        return False, str(e)
+
+
+def _verify_contract_exists(address: str) -> bool:
+    """Check if a contract exists at the given address."""
+    try:
+        result = subprocess.run(
+            ["is", "contract", address],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
+    """Write all blockchain configuration files.
+
+    Files written:
+    - web3-defaults.yaml (RPC, contracts, payment token, DEX addresses)
+    - blockhost.yaml (server, admin, provisioner config)
+    - admin-commands.json
+    """
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        var_dir = Path("/var/lib/blockhost")
+        var_dir.mkdir(parents=True, exist_ok=True)
+
+        blockchain = config.get("blockchain", {})
+        provisioner = config.get("provisioner", {})
+        rpc_url = blockchain.get("rpc_url", "")
+        nft_contract = blockchain.get("nft_contract", "")
+        sub_contract = blockchain.get("subscription_contract", "")
+        payment_token = blockchain.get("payment_token", "")
+        admin_wallet = config.get("admin_wallet", "")
+
+        deployer_address = blockchain.get("deployer_address", "")
+
+        # Read server public key
+        server_pubkey = ""
+        pubkey_file = CONFIG_DIR / "server.pubkey"
+        if pubkey_file.exists():
+            server_pubkey = pubkey_file.read_text().strip()
+
+        bridge = provisioner.get("bridge") or _discover_bridge()
+
+        # --- web3-defaults.yaml ---
+        web3_config: dict = {
+            "blockchain": {
+                "rpc_url": rpc_url,
+                "nft_contract": nft_contract,
+                "subscriptions_contract": sub_contract,
+                "payment_token": payment_token,
+            },
+        }
+
+        web3_path = CONFIG_DIR / "web3-defaults.yaml"
+        if web3_path.exists():
+            try:
+                import yaml
+
+                existing = yaml.safe_load(web3_path.read_text()) or {}
+                for section, values in web3_config.items():
+                    if isinstance(values, dict) and isinstance(
+                        existing.get(section), dict
+                    ):
+                        existing[section].update(values)
+                    else:
+                        existing[section] = values
+                web3_config = existing
+            except ImportError:
+                pass
+        _write_yaml(web3_path, web3_config)
+        _set_blockhost_ownership(web3_path, 0o640)
+
+        # --- blockhost.yaml ---
+        public_secret = config.get("admin_public_secret", "blockhost-access")
+        bh_config: dict = {
+            "server": {
+                "address": deployer_address,
+                "mnemonic_file": "/etc/blockhost/deployer.mnemonic",
+            },
+            "server_public_key": server_pubkey,
+            "public_secret": public_secret,
+            "contract_address": sub_contract,
+        }
+
+        if provisioner:
+            bh_config["provisioner"] = {
+                "node": provisioner.get("node", ""),
+                "bridge": provisioner.get("bridge", bridge),
+                "vmid_start": provisioner.get("vmid_start", 100),
+                "vmid_end": provisioner.get("vmid_end", 999),
+                "gc_grace_days": provisioner.get("gc_grace_days", 7),
+            }
+
+        admin_commands = config.get("admin_commands", {})
+        bh_config["admin"] = {
+            "wallet_address": admin_wallet,
+            "credential_nft_id": 0,
+            "max_command_age": 300,
+        }
+
+        bh_path = CONFIG_DIR / "blockhost.yaml"
+        _write_yaml(bh_path, bh_config)
+        _set_blockhost_ownership(bh_path, 0o640)
+
+        # --- admin-commands.json ---
+        if admin_commands.get("enabled") and admin_commands.get("knock_command"):
+            commands_db = {
+                "commands": {
+                    admin_commands["knock_command"]: {
+                        "action": "knock",
+                        "description": "Open configured ports temporarily",
+                        "params": {
+                            "allowed_ports": admin_commands.get("knock_ports", [22]),
+                            "default_duration": admin_commands.get(
+                                "knock_timeout", 300
+                            ),
+                        },
+                    }
+                }
+            }
+            cmd_path = CONFIG_DIR / "admin-commands.json"
+            cmd_path.write_text(json.dumps(commands_db, indent=2) + "\n")
+            _set_blockhost_ownership(cmd_path, 0o640)
+
+        # --- admin-signature.key ---
+        admin_signature = config.get("admin_signature", "")
+        if admin_signature:
+            sig_file = CONFIG_DIR / "admin-signature.key"
+            sig_file.write_text(admin_signature)
+            _set_blockhost_ownership(sig_file, 0o640)
+
+        # --- Initialize vms.json if missing ---
+        vms_path = var_dir / "vms.json"
+        if not vms_path.exists():
+            vms_path.write_text(
+                json.dumps(
+                    {
+                        "vms": {},
+                        "next_vmid": provisioner.get("vmid_start", 100),
+                        "allocated_ips": [],
+                        "allocated_ipv6": [],
+                        "reserved_nft_tokens": {},
+                    },
+                    indent=2,
+                )
+            )
+
+        config["_step_result_chain_config"] = {
+            "message": "Configuration files written"
+        }
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+# ---------------------------------------------------------------------------
+# Post-finalization step functions
+# ---------------------------------------------------------------------------
+
+
+def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
+    """Mint admin credential NFT #0.
+
+    For fresh deploys: mint via blockhost-mint-nft CLI.
+    For pre-deployed contracts: check if NFT exists, update if needed.
+    """
+    try:
+        blockchain = config.get("blockchain", {})
+        admin_wallet = config.get("admin_wallet", "")
+
+        if not admin_wallet:
+            return False, "Admin wallet address not configured"
+
+        if not validate_address(admin_wallet):
+            return False, "Invalid admin wallet address"
+
+        # Build encrypted connection details for the NFT
+        user_encrypted = ""
+        admin_signature = config.get("admin_signature", "")
+        https_cfg = config.get("https", {})
+        if not https_cfg:
+            https_file = CONFIG_DIR / "https.json"
+            if https_file.exists():
+                https_cfg = json.loads(https_file.read_text())
+        server_addr = https_cfg.get("ipv6_address") or https_cfg.get("hostname", "")
+
+        if server_addr and admin_signature:
+            # Encrypt connection details using nft_tool CLI
+            connection_details = json.dumps({
+                "hostname": server_addr,
+                "port": 22,
+                "username": "admin",
+            })
+            try:
+                result = subprocess.run(
+                    [
+                        "nft_tool", "encrypt-symmetric",
+                        "--signature", admin_signature,
+                        "--plaintext", connection_details,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    user_encrypted = result.stdout.strip()
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+        # Check if NFT #0 already exists (pre-deployed contracts)
+        if blockchain.get("contract_mode") == "existing":
+            try:
+                result = subprocess.run(
+                    ["is", admin_wallet, "0"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if result.returncode == 0:
+                    # NFT exists — update userEncrypted if we have it
+                    if user_encrypted:
+                        subprocess.run(
+                            ["bw", "set", "encrypt", "0", user_encrypted],
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                            env=_bw_env(blockchain),
+                        )
+                    config["_step_result_mint_nft"] = {
+                        "token_id": 0,
+                        "owner": admin_wallet,
+                    }
+                    return True, None
+            except FileNotFoundError:
+                pass
+
+        # Mint NFT #0 via CLI
+        cmd = [
+            "blockhost-mint-nft",
+            "--owner-wallet", admin_wallet,
+        ]
+        if user_encrypted:
+            cmd.extend(["--user-encrypted", user_encrypted])
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if result.returncode != 0:
+            return False, f"NFT minting failed: {result.stderr or result.stdout}"
+
+        # stdout is the token ID
+        token_id = result.stdout.strip()
+        config["_step_result_mint_nft"] = {
+            "token_id": int(token_id) if token_id.isdigit() else 0,
+            "owner": admin_wallet,
+        }
+        return True, None
+    except subprocess.TimeoutExpired:
+        return False, "NFT minting timed out"
+    except Exception as e:
+        return False, str(e)
+
+
+def finalize_plan(config: dict) -> tuple[bool, Optional[str]]:
+    """Set payment token and create default subscription plan via bw CLI."""
+    try:
+        blockchain = config.get("blockchain", {})
+        plan_name = blockchain.get("plan_name", "Basic VM")
+        plan_price = blockchain.get("plan_price_cents", 50)
+        payment_token = blockchain.get("payment_token", "")
+
+        env = _bw_env(blockchain)
+
+        # Set payment token on contract (OPNet equivalent of setPrimaryStablecoin)
+        if payment_token:
+            result = subprocess.run(
+                ["bw", "config", "stable", payment_token],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
+            if result.returncode != 0:
+                return False, f"Failed to set payment token: {result.stderr or result.stdout}"
+
+        # Create plan
+        result = subprocess.run(
+            ["bw", "plan", "create", plan_name, str(plan_price)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+
+        if result.returncode != 0:
+            return False, f"Plan creation failed: {result.stderr or result.stdout}"
+
+        config["_step_result_plan"] = {
+            "plan_name": plan_name,
+            "price": f"{plan_price} cents/day",
+        }
+        return True, None
+    except FileNotFoundError:
+        return False, "bw CLI not found"
+    except subprocess.TimeoutExpired:
+        return False, "Plan creation timed out"
+    except Exception as e:
+        return False, str(e)
+
+
+def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
+    """Write addressbook.json and revenue-share.json. Enable blockhost-monitor."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        blockchain = config.get("blockchain", {})
+        admin_wallet = config.get("admin_wallet", "")
+
+        deployer_address = blockchain.get("deployer_address", "")
+
+        # Build addressbook entries
+        addressbook: dict = {}
+
+        if admin_wallet:
+            addressbook["admin"] = {"address": admin_wallet}
+
+        if deployer_address:
+            addressbook["server"] = {
+                "address": deployer_address,
+                "keyfile": "/etc/blockhost/deployer.mnemonic",
+            }
+
+        if blockchain.get("revenue_share_dev"):
+            addressbook["dev"] = {"address": admin_wallet}
+
+        if blockchain.get("revenue_share_broker"):
+            addressbook["broker"] = {"address": admin_wallet}
+
+        # Try ab --init CLI first
+        ab_init_used = False
+        if admin_wallet and deployer_address:
+            try:
+                cmd = ["ab", "--init", admin_wallet, deployer_address]
+                if blockchain.get("revenue_share_dev"):
+                    cmd.append(admin_wallet)
+                if blockchain.get("revenue_share_broker"):
+                    cmd.append(admin_wallet)
+                cmd.append("/etc/blockhost/deployer.mnemonic")
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                ab_init_used = result.returncode == 0
+            except FileNotFoundError:
+                pass
+
+        if not ab_init_used:
+            ab_path = CONFIG_DIR / "addressbook.json"
+            if not ab_path.exists() or not json.loads(ab_path.read_text() or "{}"):
+                ab_path.write_text(json.dumps(addressbook, indent=2) + "\n")
+                _set_blockhost_ownership(ab_path, 0o640)
+
+        # Write revenue-share.json
+        rev_enabled = blockchain.get("revenue_share_enabled", False)
+        rev_percent = blockchain.get("revenue_share_percent", 1.0)
+        recipients: list[dict] = []
+
+        if rev_enabled:
+            active_roles = [
+                r for r in ["dev", "broker"]
+                if blockchain.get(f"revenue_share_{r}")
+            ]
+            share_each = rev_percent / max(len(active_roles), 1)
+            for role in active_roles:
+                recipients.append({"role": role, "percent": share_each})
+
+        rev_config = {
+            "enabled": rev_enabled,
+            "total_percent": rev_percent if rev_enabled else 0.0,
+            "recipients": recipients,
+        }
+
+        rev_path = CONFIG_DIR / "revenue-share.json"
+        rev_path.write_text(json.dumps(rev_config, indent=2) + "\n")
+        _set_blockhost_ownership(rev_path, 0o640)
+
+        # Enable blockhost-monitor service
+        subprocess.run(
+            ["systemctl", "enable", "blockhost-monitor"],
+            capture_output=True,
+            timeout=30,
+        )
+
+        config["_step_result_revenue_share"] = {
+            "message": "Addressbook initialized"
+        }
+        return True, None
+    except Exception as e:
+        return False, str(e)

@@ -238,12 +238,12 @@ function startAuthLogMonitor(txHash: string, ports: number[]): void {
 
         // Extract source IP (IPv4 or IPv6)
         const match = line.match(/from\s+(\S+)\s+port\s+/);
-        if (match && isValidIP(match[1])) {
-          const loginIp = match[1];
-          console.log(`[KNOCK] Login from IP: ${loginIp}`);
+        const matchedIp = match?.[1];
+        if (matchedIp && isValidIP(matchedIp)) {
+          console.log(`[KNOCK] Login from IP: ${matchedIp}`);
 
-          writeActiveFile(loginIp);
-          transitionToPostLogin(txHash, loginIp).catch((err) => {
+          writeActiveFile(matchedIp);
+          transitionToPostLogin(txHash, matchedIp).catch((err) => {
             console.warn(`[KNOCK] Error transitioning after SSH login: ${err}`);
           });
         } else {

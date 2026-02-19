@@ -1,0 +1,219 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * blockhost-mint-nft — Mint an access credential NFT on OPNet.
+ *
+ * Called by the provisioner after VM creation to issue an NFT
+ * containing the encrypted connection details.
+ *
+ * Usage:
+ *   blockhost-mint-nft --owner-wallet 0x<64hex> --user-encrypted <hex-string>
+ *   blockhost-mint-nft --owner-wallet 0x<64hex> --user-encrypted <hex-string> --dry-run
+ *
+ * Config:
+ *   Reads NFT contract address + RPC URL from /etc/blockhost/web3-defaults.yaml
+ *   Reads deployer mnemonic from OPNET_MNEMONIC env var or /etc/blockhost/deployer.mnemonic
+ *
+ * stdout: token ID on success
+ * Exit: 0 = success, 1 = failure
+ */
+
+import { readFileSync } from 'fs';
+import * as yaml from 'js-yaml';
+import {
+    AddressTypes,
+    IInteractionParameters,
+    TransactionFactory,
+    Mnemonic,
+    MLDSASecurityLevel,
+} from '@btc-vision/transaction';
+import { getContract, JSONRpcProvider } from 'opnet';
+import { Address, networks } from '@btc-vision/bitcoin';
+import {
+    ACCESS_CREDENTIAL_NFT_ABI,
+    type IAccessCredentialNFT,
+} from '../src/fund-manager/contract-abis.js';
+
+const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
+const MNEMONIC_PATH = `${CONFIG_DIR}/deployer.mnemonic`;
+
+interface Args {
+    ownerWallet: string;
+    userEncrypted: string;
+    dryRun: boolean;
+}
+
+function parseArgs(): Args {
+    const args = process.argv.slice(2);
+    let ownerWallet = '';
+    let userEncrypted = '';
+    let dryRun = false;
+
+    for (let i = 0; i < args.length; i++) {
+        switch (args[i]) {
+            case '--owner-wallet':
+                ownerWallet = args[++i] ?? '';
+                break;
+            case '--user-encrypted':
+                userEncrypted = args[++i] ?? '';
+                break;
+            case '--dry-run':
+                dryRun = true;
+                break;
+            default:
+                console.error(`Unknown argument: ${args[i]}`);
+                process.exit(1);
+        }
+    }
+
+    if (!ownerWallet) {
+        console.error('Required: --owner-wallet 0x<64 hex chars>');
+        process.exit(1);
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(ownerWallet)) {
+        console.error('--owner-wallet must be 0x + 64 hex characters (32-byte OPNet address)');
+        process.exit(1);
+    }
+
+    return { ownerWallet, userEncrypted, dryRun };
+}
+
+function loadMnemonic(): string {
+    const fromEnv = process.env['OPNET_MNEMONIC'];
+    if (fromEnv) return fromEnv;
+
+    try {
+        return readFileSync(MNEMONIC_PATH, 'utf8').trim();
+    } catch {
+        console.error(`Set OPNET_MNEMONIC or create ${MNEMONIC_PATH}`);
+        process.exit(1);
+    }
+}
+
+interface Web3Yaml {
+    blockchain?: {
+        rpc_url?: string;
+        nft_contract?: string;
+    };
+}
+
+function loadConfig(): { rpcUrl: string; nftContract: string } {
+    const yamlText = readFileSync(`${CONFIG_DIR}/web3-defaults.yaml`, 'utf8');
+    const raw = yaml.load(yamlText) as Web3Yaml;
+    const rpcUrl = raw.blockchain?.rpc_url;
+    const nftContract = raw.blockchain?.nft_contract;
+    if (!rpcUrl) {
+        console.error('blockchain.rpc_url not set in web3-defaults.yaml');
+        process.exit(1);
+    }
+    if (!nftContract) {
+        console.error('blockchain.nft_contract not set in web3-defaults.yaml');
+        process.exit(1);
+    }
+    return { rpcUrl, nftContract };
+}
+
+function inferNetwork(rpcUrl: string) {
+    if (rpcUrl.includes('mainnet')) return networks.bitcoin;
+    if (rpcUrl.includes('testnet')) return networks.testnet;
+    return networks.regtest;
+}
+
+async function main(): Promise<void> {
+    const { ownerWallet, userEncrypted, dryRun } = parseArgs();
+    const mnemonicPhrase = loadMnemonic();
+    const { rpcUrl, nftContract: nftContractAddr } = loadConfig();
+    const network = inferNetwork(rpcUrl);
+
+    const provider = new JSONRpcProvider(rpcUrl, network);
+
+    const mnemonic = new Mnemonic(
+        mnemonicPhrase,
+        '',
+        network,
+        MLDSASecurityLevel.LEVEL2,
+    );
+    const wallet = mnemonic.deriveOPWallet(AddressTypes.P2TR, 0);
+
+    console.error(`Deployer: ${wallet.p2tr}`);
+
+    // Resolve owner wallet to Address object
+    const ownerAddress = Address.fromString(ownerWallet);
+
+    // Get contract instance for simulation
+    const contract = getContract<IAccessCredentialNFT>(
+        nftContractAddr,
+        ACCESS_CREDENTIAL_NFT_ABI,
+        provider,
+        network,
+        wallet.p2tr,
+    );
+
+    // Simulate the mint call
+    console.error(`Minting NFT to ${ownerWallet}...`);
+    const sim = await contract.mint(ownerAddress, userEncrypted || '');
+
+    if ('error' in sim) {
+        console.error(`Simulation failed: ${sim.error}`);
+        await provider.close();
+        process.exit(1);
+    }
+
+    const tokenId = sim.properties.tokenId;
+    console.error(`Simulated tokenId: ${tokenId}`);
+
+    if (dryRun) {
+        console.error('[DRY RUN] Would mint — not broadcasting');
+        console.log(tokenId.toString());
+        await provider.close();
+        return;
+    }
+
+    // Get UTXOs and challenge for signing
+    const utxos = await provider.utxoManager.getUTXOs({
+        address: wallet.p2tr,
+    });
+    if (utxos.length === 0) {
+        console.error('No UTXOs available at deployer address');
+        await provider.close();
+        process.exit(1);
+    }
+
+    const challenge = await provider.getChallenge();
+
+    // Sign the interaction transaction
+    const factory = new TransactionFactory();
+    const interactionParams: IInteractionParameters = {
+        from: wallet.p2tr,
+        to: nftContractAddr,
+        utxos: utxos,
+        signer: wallet.keypair,
+        mldsaSigner: wallet.mldsaKeypair,
+        network: network,
+        feeRate: 15,
+        priorityFee: 10_000n,
+        gasSatFee: 50_000n,
+        calldata: sim.calldata!,
+        challenge: challenge,
+    };
+
+    const signed = await factory.signInteraction(interactionParams);
+
+    // Broadcast
+    for (let i = 0; i < signed.transaction.length; i++) {
+        const label = i === 0 ? 'funding' : 'interaction';
+        console.error(`Broadcasting ${label} TX...`);
+        const result = await provider.sendRawTransaction(signed.transaction[i]);
+        console.error(`${label}: ${JSON.stringify(result)}`);
+    }
+
+    console.error(`NFT minted! Token ID: ${tokenId}`);
+    // stdout: just the token ID for machine consumption
+    console.log(tokenId.toString());
+
+    await provider.close();
+}
+
+main().catch((err) => {
+    console.error(`Minting failed: ${err}`);
+    process.exit(1);
+});

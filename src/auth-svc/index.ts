@@ -25,7 +25,8 @@ import { ml_dsa44, ml_dsa65, ml_dsa87 } from "@btc-vision/post-quantum/ml-dsa.js
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-const PENDING_DIR = "/run/libpam-web3/pending";
+const DEFAULT_PENDING_DIR = "/run/libpam-web3/pending";
+let PENDING_DIR = DEFAULT_PENDING_DIR;
 const MAX_BODY_SIZE = 16_384;
 const DEFAULT_CONFIG_PATH = "/etc/web3-auth/config.toml";
 
@@ -55,6 +56,7 @@ interface HttpsConfig {
   cert_path: string;
   key_path: string;
   signing_page_path: string;
+  pending_dir: string;
 }
 
 /**
@@ -70,30 +72,30 @@ function parseToml(content: string): Record<string, Record<string, unknown>> {
     if (!line || line.startsWith("#")) continue;
 
     const secMatch = line.match(/^\[([a-zA-Z_][a-zA-Z0-9_]*)\]$/);
-    if (secMatch) {
+    if (secMatch?.[1]) {
       section = secMatch[1];
       result[section] = result[section] || {};
       continue;
     }
 
     const kvMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$/);
-    if (!kvMatch || !section) continue;
+    if (!kvMatch?.[1] || !kvMatch[2] || !section) continue;
 
     const key = kvMatch[1];
     const val = kvMatch[2].trim();
 
     if (val.startsWith('"') && val.endsWith('"')) {
-      result[section][key] = val.slice(1, -1);
+      result[section]![key] = val.slice(1, -1);
     } else if (val.startsWith("[")) {
       const inner = val.slice(1, val.lastIndexOf("]"));
-      result[section][key] = inner
+      result[section]![key] = inner
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
         .map((s) => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s));
     } else {
       const num = Number(val);
-      result[section][key] = Number.isNaN(num) ? val : num;
+      result[section]![key] = Number.isNaN(num) ? val : num;
     }
   }
 
@@ -117,11 +119,12 @@ function loadConfig(configPath: string): HttpsConfig {
   const signing_page_path = String(
     sec.signing_page_path || "/usr/share/blockhost/signing-page/index.html"
   );
+  const pending_dir = String(sec.pending_dir || DEFAULT_PENDING_DIR);
 
   if (!cert_path) throw new Error("https.cert_path is required");
   if (!key_path) throw new Error("https.key_path is required");
 
-  return { port, bind, cert_path, key_path, signing_page_path };
+  return { port, bind, cert_path, key_path, signing_page_path, pending_dir };
 }
 
 // ── Validation & Decoding ─────────────────────────────────────────────
@@ -140,10 +143,15 @@ function decodeBase64(str: string): Buffer | null {
 interface CallbackPayload {
   signature: string;
   publicKey: string;
+  otp: string;
+  machineId: string;
 }
 
 /**
  * Parse and validate the callback POST body. Rejects unknown fields.
+ * Payload is self-describing: signature + publicKey + otp + machineId.
+ * The verifier can reconstruct the signed message and derive the wallet
+ * address without any external state.
  */
 function parseCallbackBody(body: string): CallbackPayload | null {
   let parsed: unknown;
@@ -160,13 +168,20 @@ function parseCallbackBody(body: string): CallbackPayload | null {
   const obj = parsed as Record<string, unknown>;
   const keys = Object.keys(obj);
 
-  if (keys.length !== 2) return null;
+  if (keys.length !== 4) return null;
   if (typeof obj["signature"] !== "string") return null;
   if (typeof obj["publicKey"] !== "string") return null;
+  if (typeof obj["otp"] !== "string") return null;
+  if (typeof obj["machineId"] !== "string") return null;
+
+  // Sanity: OTP should be short numeric, machineId should be reasonable length
+  if (obj["otp"].length > 16 || obj["machineId"].length > 128) return null;
 
   return {
     signature: obj["signature"],
     publicKey: obj["publicKey"],
+    otp: obj["otp"],
+    machineId: obj["machineId"],
   };
 }
 
@@ -220,20 +235,30 @@ function verifyAndWriteSig(sessionId: string, payload: CallbackPayload): string 
   const sigPath = path.join(PENDING_DIR, `${sessionId}.sig`);
   if (fs.existsSync(sigPath)) return "session already processed";
 
-  // Load session data
+  // Load session data and cross-check against payload
   const session = loadSession(sessionId);
   if (!session) return "session not found or malformed";
 
-  // Reconstruct expected message and SHA256 hash it
-  const message = `Authenticate to ${session.machine_id} with code: ${session.otp}`;
+  if (payload.otp !== session.otp) return "otp mismatch";
+  if (payload.machineId !== session.machine_id) return "machine_id mismatch";
+
+  // Reconstruct signed message from payload fields and SHA256 hash it
+  // The signing page hashes this same message before passing to wallet.web3.signMLDSAMessage
+  const message = `Authenticate to ${payload.machineId} with code: ${payload.otp}`;
   const messageHash = createHash("sha256").update(message).digest();
+
+  // The signing page passes hex(SHA256(message)) to wallet.web3.signMLDSAMessage().
+  // The wallet internally SHA256-hashes the hex string it receives, so the actual
+  // signed data is SHA256(hex(SHA256(message))). We must reproduce this double-hash.
+  const walletInput = messageHash.toString("hex");
+  const signedHash = createHash("sha256").update(walletInput).digest();
 
   // Verify ML-DSA signature
   let isValid: boolean;
   try {
     isValid = level.verify(
       new Uint8Array(sigBytes),
-      new Uint8Array(messageHash),
+      new Uint8Array(signedHash),
       new Uint8Array(pubKeyBytes)
     );
   } catch (err) {
@@ -245,10 +270,10 @@ function verifyAndWriteSig(sessionId: string, payload: CallbackPayload): string 
   // Derive wallet address: 0x + hex(SHA256(publicKey))
   const walletAddress = "0x" + createHash("sha256").update(pubKeyBytes).digest("hex");
 
-  // Build .sig content
+  // Build .sig content — self-describing, verifiable without session file
   const sigContent = JSON.stringify({
-    otp: session.otp,
-    machine_id: session.machine_id,
+    otp: payload.otp,
+    machine_id: payload.machineId,
     wallet_address: walletAddress,
   });
 
@@ -379,6 +404,7 @@ function handlePostCallback(
 function main(): void {
   const configPath = process.argv[2] || DEFAULT_CONFIG_PATH;
   const config = loadConfig(configPath);
+  PENDING_DIR = config.pending_dir;
 
   let signingPageHtml: string;
   try {
@@ -410,14 +436,14 @@ function main(): void {
 
     // GET /auth/pending/:session_id
     const pendingMatch = pathname.match(/^\/auth\/pending\/([^/]+)$/);
-    if (req.method === "GET" && pendingMatch) {
+    if (req.method === "GET" && pendingMatch?.[1]) {
       handleGetPending(pendingMatch[1], res);
       return;
     }
 
     // POST /auth/callback/:session_id
     const callbackMatch = pathname.match(/^\/auth\/callback\/([^/]+)$/);
-    if (req.method === "POST" && callbackMatch) {
+    if (req.method === "POST" && callbackMatch?.[1]) {
       handlePostCallback(callbackMatch[1], req, res);
       return;
     }

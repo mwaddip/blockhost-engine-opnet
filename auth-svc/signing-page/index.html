@@ -60,6 +60,19 @@ if(!sessionId){
     $('connect').disabled=true;
 }
 
+function bytesToHex(bytes){
+    var hex='';
+    for(var i=0;i<bytes.length;i++) hex+=('0'+bytes[i].toString(16)).slice(-2);
+    return hex;
+}
+
+function hexToBytes(hex){
+    if(hex.startsWith('0x')) hex=hex.slice(2);
+    var bytes=new Uint8Array(hex.length/2);
+    for(var i=0;i<bytes.length;i++) bytes[i]=parseInt(hex.substr(i*2,2),16);
+    return bytes;
+}
+
 function uint8ToBase64(bytes){
     var binary='';
     for(var i=0;i<bytes.length;i++) binary+=String.fromCharCode(bytes[i]);
@@ -67,9 +80,9 @@ function uint8ToBase64(bytes){
 }
 
 function getWallet(){
-    if(!window.unisat) return null;
-    var w=window.unisat;
-    if(typeof w.requestAccounts==='function') return w;
+    if(!window.opnet) return null;
+    var w=window.opnet;
+    if(typeof w.requestAccounts==='function'&&w.web3) return w;
     return null;
 }
 
@@ -109,10 +122,22 @@ function sign(){
     $('sign').disabled=true;
     $('sign').textContent='Signing...';
 
-    wallet.signMLDSAMessage(msg).then(function(signed){
+    // SHA256 hash the message, then hex-encode for the wallet API.
+    // The wallet internally SHA256-hashes whatever string it receives,
+    // so the actual signed data is SHA256(messageHex).
+    var msgBytes=new TextEncoder().encode(msg);
+    crypto.subtle.digest('SHA-256',msgBytes).then(function(hashBuf){
+        var messageHex=bytesToHex(new Uint8Array(hashBuf));
+        return wallet.web3.signMLDSAMessage(messageHex);
+    }).then(function(signed){
+        // signed.signature and signed.publicKey are hex strings
+        // auth-svc expects base64-encoded raw bytes for sig/pubkey
+        // otp + machineId included so the payload is self-verifiable
         var payload=JSON.stringify({
-            signature:uint8ToBase64(signed.signature),
-            publicKey:uint8ToBase64(signed.publicKey)
+            signature:uint8ToBase64(hexToBytes(signed.signature)),
+            publicKey:uint8ToBase64(hexToBytes(signed.publicKey)),
+            otp:code,
+            machineId:machine
         });
 
         return fetch('/auth/callback/'+sessionId,{

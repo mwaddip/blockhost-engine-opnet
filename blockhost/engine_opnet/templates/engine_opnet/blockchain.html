@@ -1,0 +1,863 @@
+{% extends "base.html" %}
+{% from "macros/wizard_steps.html" import step_bar %}
+
+{% block title %}Blockchain Setup - BlockHost Installer{% endblock %}
+
+{% block content %}
+{{ step_bar('opnet') }}
+
+<div class="card">
+    <h2>Blockchain Configuration</h2>
+    <p class="text-muted mb-2">Configure the OPNet network and smart contract settings for VM provisioning.</p>
+
+    <form id="blockchain-form" method="POST" action="{{ url_for('engine_opnet.wizard_opnet') }}">
+        <!-- Network Selection -->
+        <div class="form-section">
+            <h3>Network Selection</h3>
+            <div class="form-group">
+                <label for="network">OPNet Network</label>
+                <select id="network" name="network" onchange="updateRpcEndpoint()">
+                    {% for nid, nname in network_names.items() %}
+                    <option value="{{ nid }}"
+                            data-rpc="{{ network_rpc.get(nid, '') }}"
+                            {% if blockchain.get('network', 'regtest') == nid %}selected{% endif %}>
+                        {{ nname }}
+                    </option>
+                    {% endfor %}
+                    <option value="custom" {% if blockchain.get('network') and blockchain.get('network') not in network_names %}selected{% endif %}>
+                        Custom Endpoint
+                    </option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="rpc_url">RPC Endpoint</label>
+                <input type="text" id="rpc_url" name="rpc_url"
+                       value="{{ blockchain.get('rpc_url', 'https://regtest.opnet.org') }}"
+                       placeholder="https://...">
+                <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                    OPNet RPC nodes. For production, use a dedicated node.
+                </p>
+            </div>
+        </div>
+
+        <!-- Deployer Wallet -->
+        <div class="form-section">
+            <h3>Deployer Wallet</h3>
+            <p class="text-muted mb-2" style="font-size: 0.875rem;">
+                This wallet pays transaction fees for contract deployment and server operations.
+                OPNet uses mnemonic-based wallets with ML-DSA post-quantum signatures.
+            </p>
+
+            <div class="radio-group mb-2">
+                <label class="radio-option" onclick="selectRadio(this)">
+                    <input type="radio" name="wallet_mode" value="generate"
+                           {% if blockchain.get('wallet_mode', 'generate') == 'generate' %}checked{% endif %}>
+                    <div class="radio-label">
+                        <h4>Generate new wallet</h4>
+                        <p>Create a new mnemonic wallet automatically</p>
+                    </div>
+                </label>
+                <label class="radio-option" onclick="selectRadio(this)">
+                    <input type="radio" name="wallet_mode" value="import"
+                           {% if blockchain.get('wallet_mode') == 'import' %}checked{% endif %}>
+                    <div class="radio-label">
+                        <h4>Import existing wallet</h4>
+                        <p>Use an existing mnemonic phrase</p>
+                    </div>
+                </label>
+            </div>
+
+            <!-- Generate wallet section -->
+            <div id="wallet-generate" {% if blockchain.get('wallet_mode') == 'import' %}class="hidden"{% endif %} class="mb-2">
+                <button type="button" class="btn btn-secondary" onclick="generateWallet()" id="generate-btn">
+                    Generate Wallet
+                </button>
+                <div id="wallet-generated" class="hidden" style="margin-top: 1rem;">
+                    <div class="alert alert-warning">
+                        <strong>Important:</strong> Save your mnemonic phrase securely! It cannot be recovered later.
+                    </div>
+                    <label>Mnemonic Phrase <span style="color: var(--danger);">*</span></label>
+                    <div class="address-box" style="line-height: 1.6;">
+                        <span id="deployer-mnemonic" style="word-break: break-word;">-</span>
+                        <button type="button" class="btn btn-small copy-btn" onclick="copyToClipboard('deployer-mnemonic', this)">Copy</button>
+                    </div>
+                    <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                        Write down these words in order and store them in a secure location.
+                    </p>
+                    <label style="margin-top: 1rem;">Deployer Address (P2TR)</label>
+                    <div class="address-box">
+                        <span id="deployer-address" style="font-family: monospace; word-break: break-all;">-</span>
+                        <button type="button" class="btn btn-small copy-btn" onclick="copyToClipboard('deployer-address', this)">Copy</button>
+                    </div>
+                    <input type="hidden" name="deployer_mnemonic" id="deployer-mnemonic-hidden"
+                           value="{{ blockchain.get('deployer_mnemonic', '') }}">
+                    <input type="hidden" name="deployer_address" id="deployer-address-hidden"
+                           value="{{ blockchain.get('deployer_address', '') }}">
+
+                    <!-- Balance check section -->
+                    <div id="balance-section" style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 4px;">
+                        <label>Wallet Balance</label>
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <span id="wallet-balance" style="font-size: 1.25rem; font-weight: 500;">0 BTC</span>
+                            <button type="button" class="btn btn-small btn-secondary" onclick="checkBalance()" id="check-balance-btn">
+                                Refresh
+                            </button>
+                        </div>
+                        <p class="text-muted mt-1" style="font-size: 0.75rem;" id="balance-hint">
+                            Fund this wallet with BTC to continue. Use OPWallet below or send BTC to the P2TR address above.
+                        </p>
+                        <div id="topup-section" style="margin-top: 0.75rem;">
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <input type="number" id="topup-amount" step="1000" min="1000"
+                                       placeholder="100000" style="width: 8rem;">
+                                <span style="font-size: 0.875rem;">sats</span>
+                                <button type="button" class="btn btn-small btn-primary"
+                                        onclick="topUpWallet('generate')" id="topup-btn">
+                                    Send from OPWallet
+                                </button>
+                            </div>
+                            <div id="topup-status" class="text-muted mt-1" style="font-size: 0.75rem;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Import wallet section -->
+            <div id="wallet-import" {% if blockchain.get('wallet_mode', 'generate') != 'import' %}class="hidden"{% endif %}>
+                <div class="form-group">
+                    <label for="import_mnemonic">Mnemonic Phrase</label>
+                    <textarea id="import_mnemonic" name="import_mnemonic" rows="3"
+                              placeholder="word1 word2 word3 ... (12 or 24 words)"
+                              style="font-family: monospace; resize: vertical;">{{ blockchain.get('deployer_mnemonic', '') if blockchain.get('wallet_mode') == 'import' else '' }}</textarea>
+                    <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                        12 or 24 word BIP39 mnemonic phrase.
+                    </p>
+                </div>
+                <button type="button" class="btn btn-secondary btn-small" onclick="validateImportMnemonic()">
+                    Validate Mnemonic
+                </button>
+                <div id="import-status" class="hidden" style="margin-top: 0.5rem;"></div>
+                <div id="import-balance-section" class="hidden" style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 4px;">
+                    <label>Wallet Balance</label>
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <span id="import-wallet-balance" style="font-size: 1.25rem; font-weight: 500;">0 BTC</span>
+                        <button type="button" class="btn btn-small btn-secondary" onclick="checkImportedBalance()" id="import-check-balance-btn">
+                            Refresh
+                        </button>
+                    </div>
+                    <div id="import-topup-section" style="margin-top: 0.75rem;">
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="number" id="import-topup-amount" step="1000" min="1000"
+                                   placeholder="100000" style="width: 8rem;">
+                            <span style="font-size: 0.875rem;">sats</span>
+                            <button type="button" class="btn btn-small btn-primary"
+                                    onclick="topUpWallet('import')" id="import-topup-btn">
+                                Send from OPWallet
+                            </button>
+                        </div>
+                        <div id="import-topup-status" class="text-muted mt-1" style="font-size: 0.75rem;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contract Deployment -->
+        <div class="form-section" id="contract-section">
+            <h3>Smart Contracts</h3>
+            <p class="text-muted mb-2" style="font-size: 0.875rem;">
+                BlockHost requires NFT and Subscription contracts for VM access control.
+            </p>
+
+            <div class="radio-group mb-2">
+                <label class="radio-option" onclick="selectRadio(this)">
+                    <input type="radio" name="contract_mode" value="deploy"
+                           {% if blockchain.get('contract_mode', 'deploy') == 'deploy' %}checked{% endif %}>
+                    <div class="radio-label">
+                        <h4>Deploy new contracts</h4>
+                        <p>Deploy fresh contracts (requires funded wallet)</p>
+                    </div>
+                </label>
+                <label class="radio-option" onclick="selectRadio(this)">
+                    <input type="radio" name="contract_mode" value="existing"
+                           {% if blockchain.get('contract_mode') == 'existing' %}checked{% endif %}>
+                    <div class="radio-label">
+                        <h4>Use existing contracts</h4>
+                        <p>Enter pubkeys of already-deployed contracts</p>
+                    </div>
+                </label>
+            </div>
+
+            <!-- Existing contracts section -->
+            <div id="contracts-existing" {% if blockchain.get('contract_mode', 'deploy') != 'existing' %}class="hidden"{% endif %}>
+                <div class="two-col">
+                    <div class="form-group">
+                        <label for="nft_contract">NFT Contract Pubkey</label>
+                        <input type="text" id="nft_contract" name="nft_contract"
+                               value="{{ blockchain.get('nft_contract', '') }}"
+                               placeholder="0x... (64 hex chars)">
+                    </div>
+                    <div class="form-group">
+                        <label for="subscription_contract">Subscriptions Contract Pubkey</label>
+                        <input type="text" id="subscription_contract" name="subscription_contract"
+                               value="{{ blockchain.get('subscription_contract', '') }}"
+                               placeholder="0x... (64 hex chars)">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payment token (needed for both deploy and existing modes) -->
+            <div class="form-group" style="margin-top: 1rem;">
+                <label for="payment_token">Payment Token Address</label>
+                <input type="text" id="payment_token" name="payment_token"
+                       value="{{ blockchain.get('payment_token', '') }}"
+                       placeholder="0x... (64 hex chars)">
+                <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                    OP_20 stablecoin token address used for subscription payments.
+                </p>
+            </div>
+
+            <!-- Deploy status (shown during deployment) -->
+            <div id="deploy-status" class="hidden" style="margin-top: 1rem;">
+                <div class="status-indicator loading">
+                    <div class="spinner"></div>
+                    <span id="deploy-status-text">Deploying contracts...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subscription Plan -->
+        <div class="form-section">
+            <h3>Subscription Plan</h3>
+            <p class="text-muted mb-2" style="font-size: 0.875rem;">
+                Configure the default hosting plan that customers will subscribe to.
+            </p>
+
+            <div class="two-col">
+                <div class="form-group">
+                    <label for="plan_name">Plan Name</label>
+                    <input type="text" id="plan_name" name="plan_name"
+                           value="{{ blockchain.get('plan_name', 'Basic VM') }}" placeholder="Basic VM">
+                </div>
+                <div class="form-group">
+                    <label for="plan_price_cents">Price per Day (USD cents)</label>
+                    <input type="number" id="plan_price_cents" name="plan_price_cents"
+                           value="{{ blockchain.get('plan_price_cents', 50) }}" min="1" step="1" placeholder="50">
+                    <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                        e.g. 50 = $0.50/day, 100 = $1.00/day
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Revenue Sharing -->
+        <div class="form-section">
+            <h3>Revenue Sharing</h3>
+            <p class="text-muted mb-2" style="font-size: 0.875rem;">
+                Optionally share a percentage of subscription revenue with the project developer and/or your IPv6 broker.
+            </p>
+
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" id="revenue_share_enabled" name="revenue_share_enabled"
+                           {% if blockchain.get('revenue_share_enabled') %}checked{% endif %}
+                           onchange="toggleRevenueShare()">
+                    <span>Share a percentage of revenue</span>
+                </label>
+            </div>
+
+            <div id="revenue-share-details" {% if not blockchain.get('revenue_share_enabled') %}class="hidden"{% endif %}>
+                <div class="form-group">
+                    <label for="revenue_share_percent">Percentage to share</label>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="number" id="revenue_share_percent" name="revenue_share_percent"
+                               value="{{ blockchain.get('revenue_share_percent', 1.0) }}"
+                               min="0.1" step="0.1" style="width: 6rem;">
+                        <span>%</span>
+                    </div>
+                    <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                        Split equally among selected recipients.
+                    </p>
+                </div>
+
+                <div class="form-group">
+                    <label>Recipients</label>
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="revenue_share_dev"
+                                   {% if blockchain.get('revenue_share_dev', true) %}checked{% endif %}>
+                            <span>Developer</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" name="revenue_share_broker"
+                                   {% if blockchain.get('revenue_share_broker') %}checked{% endif %}>
+                            <span>Broker</span>
+                            <span class="text-muted" style="font-size: 0.7rem;">(resolved at setup time)</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-between" style="margin-top: 2rem;">
+            <a href="{{ url_for('wizard_storage') }}" class="btn btn-secondary">Back</a>
+            <button type="submit" class="btn btn-primary" id="continue-btn">Continue</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Toggle revenue sharing details
+function toggleRevenueShare() {
+    var enabled = document.getElementById('revenue_share_enabled').checked;
+    document.getElementById('revenue-share-details').classList.toggle('hidden', !enabled);
+}
+
+// Toggle sections based on radio selection
+function selectRadio(element) {
+    var radio = element.querySelector('input[type="radio"]');
+    radio.checked = true;
+
+    // Update styling
+    var group = element.closest('.radio-group');
+    group.querySelectorAll('.radio-option').forEach(function(opt) { opt.classList.remove('selected'); });
+    element.classList.add('selected');
+
+    // Toggle visibility based on selection
+    if (radio.name === 'wallet_mode') {
+        document.getElementById('wallet-generate').classList.toggle('hidden', radio.value !== 'generate');
+        document.getElementById('wallet-import').classList.toggle('hidden', radio.value !== 'import');
+        // Clear hidden fields when switching modes
+        if (radio.value === 'import') {
+            document.getElementById('deployer-mnemonic-hidden').value = '';
+            document.getElementById('deployer-address-hidden').value = '';
+        }
+        // When generating a new wallet, contracts MUST be deployed (admin = deployer)
+        var contractSection = document.getElementById('contract-section');
+        if (radio.value === 'generate') {
+            contractSection.style.display = 'none';
+            var deployRadio = document.querySelector('input[name="contract_mode"][value="deploy"]');
+            deployRadio.checked = true;
+            deployRadio.closest('.radio-option').classList.add('selected');
+            var existingRadio = document.querySelector('input[name="contract_mode"][value="existing"]');
+            existingRadio.closest('.radio-option').classList.remove('selected');
+            document.getElementById('contracts-existing').classList.add('hidden');
+        } else {
+            contractSection.style.display = '';
+        }
+    } else if (radio.name === 'contract_mode') {
+        document.getElementById('contracts-existing').classList.toggle('hidden', radio.value !== 'existing');
+    }
+
+    updateContinueButton();
+}
+
+// Update RPC endpoint when network changes
+function updateRpcEndpoint() {
+    var select = document.getElementById('network');
+    var option = select.options[select.selectedIndex];
+    var rpcInput = document.getElementById('rpc_url');
+
+    if (option.value !== 'custom' && option.dataset.rpc) {
+        rpcInput.value = option.dataset.rpc;
+    }
+}
+
+// Generate new wallet
+function generateWallet() {
+    var btn = document.getElementById('generate-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    fetch('{{ url_for("engine_opnet.api_generate_wallet") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.disabled = false;
+
+        if (data.error) {
+            alert('Failed to generate wallet: ' + data.error);
+            btn.textContent = 'Generate Wallet';
+            return;
+        }
+
+        document.getElementById('deployer-mnemonic').textContent = data.mnemonic;
+        document.getElementById('deployer-address').textContent = data.address;
+        document.getElementById('deployer-mnemonic-hidden').value = data.mnemonic;
+        document.getElementById('deployer-address-hidden').value = data.address;
+        document.getElementById('wallet-generated').classList.remove('hidden');
+        btn.textContent = 'Regenerate';
+
+        // Reset balance and start checking
+        document.getElementById('wallet-balance').textContent = '0 BTC';
+        window.generatedAddress = data.address;
+        startBalancePolling();
+        updateContinueButton();
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        alert('Error generating wallet: ' + err.message);
+        btn.textContent = 'Generate Wallet';
+    });
+}
+
+// Copy to clipboard with fallback
+function copyToClipboard(elementId, btn) {
+    var text = document.getElementById(elementId).textContent;
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+            showCopySuccess(btn);
+        }).catch(function() {
+            fallbackCopyToClipboard(text, btn);
+        });
+    } else {
+        fallbackCopyToClipboard(text, btn);
+    }
+}
+
+function fallbackCopyToClipboard(text, btn) {
+    var textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+        var successful = document.execCommand('copy');
+        if (successful) {
+            showCopySuccess(btn);
+        } else {
+            btn.textContent = 'Failed';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+        }
+    } catch (err) {
+        btn.textContent = 'Failed';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+    }
+
+    document.body.removeChild(textarea);
+}
+
+function showCopySuccess(btn) {
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+}
+
+// Balance checking
+var balancePollingInterval = null;
+var currentBalance = 0;
+
+function checkBalance() {
+    if (!window.generatedAddress) return;
+
+    var btn = document.getElementById('check-balance-btn');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+
+    var rpcUrl = document.getElementById('rpc_url').value;
+    fetch('{{ url_for("engine_opnet.api_balance") }}?address=' + encodeURIComponent(window.generatedAddress) + '&rpc_url=' + encodeURIComponent(rpcUrl))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.error) {
+            currentBalance = parseInt(data.balance_sats) || 0;
+            document.getElementById('wallet-balance').textContent = data.balance_btc + ' BTC (' + currentBalance.toLocaleString() + ' sats)';
+
+            if (currentBalance > 0) {
+                document.getElementById('balance-hint').textContent = 'Wallet funded! You can proceed with contract deployment.';
+                document.getElementById('balance-hint').style.color = 'var(--success)';
+                stopBalancePolling();
+            }
+            updateContinueButton();
+        }
+        btn.disabled = false;
+        btn.textContent = 'Refresh';
+    })
+    .catch(function(err) {
+        console.error('Balance check error:', err);
+        btn.disabled = false;
+        btn.textContent = 'Refresh';
+    });
+}
+
+function startBalancePolling() {
+    stopBalancePolling();
+    checkBalance();
+    balancePollingInterval = setInterval(checkBalance, 10000);
+}
+
+function stopBalancePolling() {
+    if (balancePollingInterval) {
+        clearInterval(balancePollingInterval);
+        balancePollingInterval = null;
+    }
+}
+
+// Update continue button state
+function updateContinueButton() {
+    var continueBtn = document.getElementById('continue-btn');
+    var contractMode = document.querySelector('input[name="contract_mode"]:checked');
+    var walletMode = document.querySelector('input[name="wallet_mode"]:checked');
+
+    contractMode = contractMode ? contractMode.value : 'deploy';
+    walletMode = walletMode ? walletMode.value : 'generate';
+
+    // If using existing contracts, balance doesn't matter
+    if (contractMode === 'existing') {
+        continueBtn.disabled = false;
+        return;
+    }
+
+    // If importing wallet, check if validated and has balance (when deploying)
+    if (walletMode === 'import') {
+        var statusDiv = document.getElementById('import-status');
+        var isValidated = statusDiv && statusDiv.innerHTML.indexOf('Valid - Address') !== -1;
+        if (!isValidated) {
+            continueBtn.disabled = true;
+            return;
+        }
+        if (contractMode === 'deploy') {
+            continueBtn.disabled = currentBalance <= 0;
+        } else {
+            continueBtn.disabled = false;
+        }
+        return;
+    }
+
+    // If deploying new contracts with generated wallet, need balance
+    if (walletMode === 'generate' && contractMode === 'deploy') {
+        var hasMnemonic = document.getElementById('deployer-mnemonic-hidden').value;
+        continueBtn.disabled = !hasMnemonic || currentBalance <= 0;
+    }
+}
+
+// Validate imported mnemonic
+function validateImportMnemonic() {
+    var mnemonicInput = document.getElementById('import_mnemonic');
+    var statusDiv = document.getElementById('import-status');
+
+    fetch('{{ url_for("engine_opnet.api_validate_mnemonic") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mnemonic: mnemonicInput.value.trim()})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        statusDiv.classList.remove('hidden');
+
+        if (!data.error) {
+            statusDiv.innerHTML = '<div class="status-indicator success">Valid - Address: ' + data.address + '</div>';
+            window.importedAddress = data.address;
+            // Store in hidden fields for form submission
+            document.getElementById('deployer-mnemonic-hidden').value = data.mnemonic;
+            document.getElementById('deployer-address-hidden').value = data.address;
+            // Show balance section
+            document.getElementById('import-balance-section').classList.remove('hidden');
+            checkImportedBalance();
+        } else {
+            statusDiv.innerHTML = '<div class="status-indicator error">Invalid: ' + data.error + '</div>';
+        }
+        updateContinueButton();
+    })
+    .catch(function(err) {
+        statusDiv.classList.remove('hidden');
+        statusDiv.innerHTML = '<div class="status-indicator error">Error: ' + err.message + '</div>';
+        updateContinueButton();
+    });
+}
+
+// Check balance for imported wallet
+function checkImportedBalance() {
+    if (!window.importedAddress) return;
+
+    var btn = document.getElementById('import-check-balance-btn');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+
+    var rpcUrl = document.getElementById('rpc_url').value;
+    fetch('{{ url_for("engine_opnet.api_balance") }}?address=' + encodeURIComponent(window.importedAddress) + '&rpc_url=' + encodeURIComponent(rpcUrl))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.error) {
+            currentBalance = parseInt(data.balance_sats) || 0;
+            document.getElementById('import-wallet-balance').textContent = data.balance_btc + ' BTC (' + currentBalance.toLocaleString() + ' sats)';
+            updateContinueButton();
+        }
+        btn.disabled = false;
+        btn.textContent = 'Refresh';
+    })
+    .catch(function(err) {
+        console.error('Balance check error:', err);
+        btn.disabled = false;
+        btn.textContent = 'Refresh';
+    });
+}
+
+// Top up deployer wallet from OPWallet browser extension
+function topUpWallet(mode) {
+    var address = mode === 'generate' ? window.generatedAddress : window.importedAddress;
+    var amountInput = document.getElementById(mode === 'generate' ? 'topup-amount' : 'import-topup-amount');
+    var statusEl = document.getElementById(mode === 'generate' ? 'topup-status' : 'import-topup-status');
+    var btn = document.getElementById(mode === 'generate' ? 'topup-btn' : 'import-topup-btn');
+
+    var sats = parseInt(amountInput.value);
+    if (!address) { statusEl.textContent = 'No deployer address'; return; }
+    if (!sats || sats <= 0) { statusEl.textContent = 'Enter an amount in sats'; return; }
+    if (!window.opnet) { statusEl.textContent = 'OPWallet not detected — install the browser extension'; return; }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Connecting to OPWallet...';
+
+    window.opnet.requestAccounts()
+    .then(function() {
+        statusEl.textContent = 'Confirm in OPWallet...';
+        return window.opnet.sendBitcoin(address, sats, { feeRate: 10 });
+    })
+    .then(function(txid) {
+        btn.disabled = false;
+        showConfirmationTracker(txid, mode);
+    })
+    .catch(function(e) {
+        if (e.code === 4001) {
+            statusEl.textContent = 'Transaction rejected by user.';
+        } else {
+            statusEl.textContent = 'Error: ' + (e.message || e);
+        }
+        btn.disabled = false;
+    });
+}
+
+// --- Confirmation tracker ---
+var confirmTracker = {
+    txid: null, mode: null, startTime: null,
+    preBalance: 0, pollId: null, timerId: null, confirmed: false
+};
+
+function showConfirmationTracker(txid, mode) {
+    // Stop any previous tracker
+    clearInterval(confirmTracker.pollId);
+    clearInterval(confirmTracker.timerId);
+
+    confirmTracker = {
+        txid: txid, mode: mode, startTime: Date.now(),
+        preBalance: currentBalance, pollId: null, timerId: null, confirmed: false
+    };
+
+    var statusEl = document.getElementById(mode === 'generate' ? 'topup-status' : 'import-topup-status');
+    statusEl.innerHTML =
+        '<div id="conf-panel" style="margin-top: 0.5rem; padding: 0.75rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px;">' +
+        '  <div style="margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">' +
+        '    <div class="spinner" style="width: 14px; height: 14px; border-width: 2px;"></div>' +
+        '    <span style="font-weight: 500;">Transaction broadcast</span>' +
+        '  </div>' +
+        '  <div style="font-size: 0.8rem; font-family: monospace; color: var(--text-muted); margin-bottom: 0.5rem;">' +
+        '    txid: ' + txid.slice(0, 20) + '...' + txid.slice(-8) +
+        '  </div>' +
+        '  <div id="conf-mempool" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Checking mempool...</div>' +
+        '  <div id="conf-block" style="font-size: 0.8rem; margin-bottom: 0.25rem;">Fetching block info...</div>' +
+        '  <div id="conf-timer" style="font-size: 0.8rem; margin-bottom: 0.5rem;"></div>' +
+        '  <div id="conf-status" style="font-size: 0.8rem; font-weight: 500; color: var(--text-muted);">' +
+        '    Waiting for next block (Bitcoin blocks average ~10 minutes)' +
+        '  </div>' +
+        '</div>';
+
+    // Initial poll
+    pollConfirmation();
+
+    // Poll every 15 seconds
+    confirmTracker.pollId = setInterval(function() {
+        if (!confirmTracker.confirmed) pollConfirmation();
+    }, 15000);
+
+    // Timer every second
+    confirmTracker.timerId = setInterval(updateTimer, 1000);
+}
+
+function pollConfirmation() {
+    var rpcUrl = document.getElementById('rpc_url').value;
+
+    // 1) Check tx status
+    fetch('{{ url_for("engine_opnet.api_tx_status") }}?txid=' + encodeURIComponent(confirmTracker.txid) + '&rpc_url=' + encodeURIComponent(rpcUrl))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        var el = document.getElementById('conf-mempool');
+        if (!el) return;
+
+        if (data.status === 'confirmed') {
+            markConfirmed('Confirmed in block #' + data.block);
+        } else if (data.status === 'pending') {
+            el.innerHTML = '<span style="color: var(--warning);">In mempool</span> — waiting to be mined';
+        } else {
+            el.textContent = 'Broadcast — monitoring...';
+        }
+    })
+    .catch(function() {});
+
+    // 2) Fetch block info
+    fetch('{{ url_for("engine_opnet.api_block_info") }}?rpc_url=' + encodeURIComponent(rpcUrl))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        var el = document.getElementById('conf-block');
+        if (!el || data.error) return;
+
+        var text = 'Current block: #' + data.height.toLocaleString();
+        if (data.block_age_secs !== undefined) {
+            var mins = Math.floor(data.block_age_secs / 60);
+            var secs = data.block_age_secs % 60;
+            text += ' (mined ' + mins + 'm ' + secs + 's ago)';
+            confirmTracker.blockAge = data.block_age_secs;
+            confirmTracker.blockAgeAt = Date.now();
+        }
+        el.textContent = text;
+    })
+    .catch(function() {});
+
+    // 3) Check balance (reuse existing)
+    if (confirmTracker.mode === 'generate') checkBalance();
+    else checkImportedBalance();
+
+    // If balance increased, tx is confirmed even if receipt check failed
+    setTimeout(function() {
+        if (!confirmTracker.confirmed && currentBalance > confirmTracker.preBalance) {
+            markConfirmed('Balance received');
+        }
+    }, 1500);
+}
+
+function markConfirmed(reason) {
+    if (confirmTracker.confirmed) return;
+    confirmTracker.confirmed = true;
+
+    clearInterval(confirmTracker.pollId);
+    clearInterval(confirmTracker.timerId);
+
+    var panel = document.getElementById('conf-panel');
+    if (!panel) return;
+
+    var mempoolEl = document.getElementById('conf-mempool');
+    var statusEl = document.getElementById('conf-status');
+    var spinner = panel.querySelector('.spinner');
+    if (spinner) spinner.style.display = 'none';
+
+    if (mempoolEl) mempoolEl.innerHTML = '<span style="color: var(--success);">' + reason + '</span>';
+    if (statusEl) statusEl.innerHTML = '<span style="color: var(--success);">Transaction confirmed! You can proceed.</span>';
+
+    // Final balance refresh
+    if (confirmTracker.mode === 'generate') checkBalance();
+    else checkImportedBalance();
+}
+
+function updateTimer() {
+    if (confirmTracker.confirmed) return;
+
+    var timerEl = document.getElementById('conf-timer');
+    if (!timerEl) return;
+
+    var elapsed = Math.floor((Date.now() - confirmTracker.startTime) / 1000);
+    var mins = Math.floor(elapsed / 60);
+    var secs = elapsed % 60;
+    var parts = ['Elapsed: ' + mins + ':' + (secs < 10 ? '0' : '') + secs];
+
+    // Live-interpolate block age from last known value
+    if (confirmTracker.blockAge !== undefined && confirmTracker.blockAgeAt) {
+        var extraSecs = Math.floor((Date.now() - confirmTracker.blockAgeAt) / 1000);
+        var totalAge = confirmTracker.blockAge + extraSecs;
+        var bm = Math.floor(totalAge / 60);
+        var bs = totalAge % 60;
+        parts.push('Last block: ' + bm + 'm ' + bs + 's ago');
+    }
+
+    timerEl.textContent = parts.join('  |  ');
+}
+
+// Form validation before submit
+document.getElementById('blockchain-form').addEventListener('submit', function(e) {
+    var walletMode = document.querySelector('input[name="wallet_mode"]:checked').value;
+    var contractMode = document.querySelector('input[name="contract_mode"]:checked').value;
+
+    // Validate wallet
+    if (walletMode === 'generate') {
+        var mnemonic = document.getElementById('deployer-mnemonic-hidden').value;
+        if (!mnemonic) {
+            e.preventDefault();
+            alert('Please generate a wallet first.');
+            return;
+        }
+
+        // Confirm user has saved mnemonic
+        if (!confirm('Have you saved your mnemonic phrase?\n\nThis phrase cannot be recovered later. Make sure you have written it down securely before continuing.')) {
+            e.preventDefault();
+            return;
+        }
+
+        // Check balance if deploying new contracts
+        if (contractMode === 'deploy' && currentBalance <= 0) {
+            e.preventDefault();
+            alert('Please fund your wallet with BTC before deploying contracts.\n\nSend BTC to the P2TR address shown above. If you want to use existing contracts instead, select "Use existing contracts".');
+            return;
+        }
+    } else if (walletMode === 'import') {
+        var importMnemonic = document.getElementById('import_mnemonic').value.trim();
+        if (!importMnemonic) {
+            e.preventDefault();
+            alert('Please enter a mnemonic phrase.');
+            return;
+        }
+        var words = importMnemonic.split(/\s+/);
+        if (words.length < 12) {
+            e.preventDefault();
+            alert('Please enter a valid mnemonic phrase (12-24 words).');
+            return;
+        }
+        // Copy mnemonic to hidden field if not already validated
+        if (!document.getElementById('deployer-mnemonic-hidden').value) {
+            document.getElementById('deployer-mnemonic-hidden').value = importMnemonic;
+        }
+    }
+
+    // Validate contracts if using existing
+    if (contractMode === 'existing') {
+        var nft = document.getElementById('nft_contract').value;
+        var sub = document.getElementById('subscription_contract').value;
+        var addrRe = /^0x[0-9a-fA-F]{64}$/;
+        if (!nft || !sub || !addrRe.test(nft) || !addrRe.test(sub)) {
+            e.preventDefault();
+            alert('Please enter valid contract pubkeys (0x + 64 hex characters).');
+            return;
+        }
+    }
+
+    // Stop balance polling when leaving page
+    stopBalancePolling();
+});
+
+// Initialize radio button styling
+document.querySelectorAll('input[type="radio"]:checked').forEach(function(radio) {
+    var opt = radio.closest('.radio-option');
+    if (opt) opt.classList.add('selected');
+});
+
+// Update continue button when modes change
+document.querySelectorAll('input[name="contract_mode"]').forEach(function(radio) {
+    radio.addEventListener('change', updateContinueButton);
+});
+document.querySelectorAll('input[name="wallet_mode"]').forEach(function(radio) {
+    radio.addEventListener('change', updateContinueButton);
+});
+
+// Hide contract section for generate mode on initial load
+{% if blockchain.get('wallet_mode', 'generate') == 'generate' %}
+document.getElementById('contract-section').style.display = 'none';
+{% endif %}
+
+// Initial state
+updateContinueButton();
+</script>
+{% endblock %}

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# blockhost-deploy-contracts — deploy NFT and/or subscription contracts on OPNet
+#
+# Usage:
+#   blockhost-deploy-contracts          # deploy both (NFT first, then subscription)
+#   blockhost-deploy-contracts nft      # deploy NFT contract only
+#   blockhost-deploy-contracts pos      # deploy subscription (point-of-sale) contract only
+#
+# Environment:
+#   OPNET_MNEMONIC           Deployer mnemonic (or reads from deployer.mnemonic)
+#   OPNET_RPC_URL            RPC endpoint (default: from web3-defaults.yaml or regtest)
+#   OPNET_PAYMENT_TOKEN      Payment token P2OP address (required for pos deployment)
+#
+# Config:
+#   /etc/blockhost/deployer.mnemonic   Deployer mnemonic phrase
+#   /etc/blockhost/web3-defaults.yaml  RPC URL, contract addresses
+#
+# stdout: contract pubkey(s), one per line (0x-prefixed 32-byte hex)
+# Exit: 0 = success, 1 = failure
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENGINE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_DIR="${BLOCKHOST_CONFIG_DIR:-/etc/blockhost}"
+
+MODE="${1:-both}"
+
+case "$MODE" in
+    both|nft|pos) ;;
+    *)
+        echo "Usage: blockhost-deploy-contracts [nft|pos]" >&2
+        echo "  nft   Deploy NFT contract only" >&2
+        echo "  pos   Deploy subscription (point-of-sale) contract only" >&2
+        echo "  (no arg) Deploy both" >&2
+        exit 1
+        ;;
+esac
+
+# Load mnemonic from file if not in env
+if [ -z "${OPNET_MNEMONIC:-}" ]; then
+    MNEMONIC_FILE="$CONFIG_DIR/deployer.mnemonic"
+    if [ ! -f "$MNEMONIC_FILE" ]; then
+        echo "Error: Set OPNET_MNEMONIC or create $MNEMONIC_FILE" >&2
+        exit 1
+    fi
+    OPNET_MNEMONIC=$(tr -d '\n' < "$MNEMONIC_FILE")
+    export OPNET_MNEMONIC
+fi
+
+# Load RPC URL from web3-defaults.yaml if not in env
+if [ -z "${OPNET_RPC_URL:-}" ]; then
+    WEB3_DEFAULTS="$CONFIG_DIR/web3-defaults.yaml"
+    if [ -f "$WEB3_DEFAULTS" ]; then
+        OPNET_RPC_URL=$(python3 -c "
+import yaml, sys
+with open('$WEB3_DEFAULTS') as f:
+    c = yaml.safe_load(f)
+rpc = c.get('blockchain', {}).get('rpc_url', '')
+if not rpc:
+    sys.exit(0)
+print(rpc)
+" 2>/dev/null || true)
+    fi
+    if [ -n "${OPNET_RPC_URL:-}" ]; then
+        export OPNET_RPC_URL
+    fi
+fi
+
+deploy_nft() {
+    echo "Deploying NFT contract..." >&2
+    local output
+    output=$(npx tsx "$ENGINE_DIR/contracts/deploy/deploy-nft.ts" 2>&1) || {
+        echo "Error: NFT deployment failed" >&2
+        echo "$output" >&2
+        return 1
+    }
+
+    # Extract contract pubkey from output
+    local pubkey
+    pubkey=$(echo "$output" | grep -oP 'Contract pubkey: \K0x[0-9a-fA-F]+')
+    if [ -z "$pubkey" ]; then
+        echo "Error: could not parse NFT contract pubkey from output:" >&2
+        echo "$output" >&2
+        return 1
+    fi
+
+    echo "$output" >&2
+    echo "$pubkey"
+}
+
+deploy_subscription() {
+    if [ -z "${OPNET_PAYMENT_TOKEN:-}" ]; then
+        echo "Error: OPNET_PAYMENT_TOKEN must be set for subscription deployment" >&2
+        return 1
+    fi
+    export OPNET_PAYMENT_TOKEN
+
+    echo "Deploying subscription contract..." >&2
+    local output
+    output=$(npx tsx "$ENGINE_DIR/contracts/deploy/deploy-subscriptions.ts" 2>&1) || {
+        echo "Error: subscription deployment failed" >&2
+        echo "$output" >&2
+        return 1
+    }
+
+    local pubkey
+    pubkey=$(echo "$output" | grep -oP 'Contract pubkey: \K0x[0-9a-fA-F]+')
+    if [ -z "$pubkey" ]; then
+        echo "Error: could not parse subscription contract pubkey from output:" >&2
+        echo "$output" >&2
+        return 1
+    fi
+
+    echo "$output" >&2
+    echo "$pubkey"
+}
+
+case "$MODE" in
+    nft)
+        deploy_nft
+        ;;
+    pos)
+        deploy_subscription
+        ;;
+    both)
+        nft_pubkey=$(deploy_nft) || exit 1
+        sub_pubkey=$(deploy_subscription) || exit 1
+        echo "$nft_pubkey"
+        echo "$sub_pubkey"
+        ;;
+esac

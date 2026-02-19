@@ -97,11 +97,82 @@ engine-specific — each engine defines its own denomination and thresholds.
 The hardcoded chain-pools approach is EVM-specific. The spec should note that
 DEX configuration is engine-owned and may come from either code or config files.
 
+## 7. `blockhost-mint-nft` rewrite (spec §3, line 367)
+
+**Current spec (EVM):**
+```
+blockhost-mint-nft \
+  --owner-wallet <0x + 40 hex> \
+  --machine-id <vm-name> \
+  --user-encrypted <hex> \
+  --public-secret <string> \
+  [--dry-run]
+```
+
+Python script using `cast send`. Installed as both CLI (`/usr/bin/blockhost-mint-nft`) and importable Python module (`from blockhost.mint_nft import mint_nft`). Contract call: `mint(address, bytes, string, string, string, string, uint256)` (7 params).
+
+**OPNet:**
+```
+blockhost-mint-nft \
+  --owner-wallet <0x + 64 hex> \
+  --user-encrypted <string> \
+  [--dry-run]
+```
+
+- Now **TypeScript** (`#!/usr/bin/env -S npx tsx`), not Python
+- Dropped `--machine-id` and `--public-secret` — audited NFT contract's `mint(address, string)` takes only 2 params
+- `--owner-wallet` validates 64 hex chars (32-byte OPNet address), not 40
+- `--user-encrypted` is a **string** (hex-encoded ECIES ciphertext), not raw bytes
+- Uses `getContract<IAccessCredentialNFT>()` + `TransactionFactory.signInteraction()` — simulate then broadcast
+- Reads config from `web3-defaults.yaml` (NFT contract address + RPC URL)
+- Reads mnemonic from `OPNET_MNEMONIC` env or `/etc/blockhost/deployer.mnemonic`
+- **stdout**: token ID only (not transaction hash) — machine-parseable
+- **stderr**: all progress/error logging
+- **No Python importable module** — the dual install path (`/usr/lib/python3/...`) is eliminated. Installer finalization calls it as CLI only.
+
+The spec's `mint_nft.py dual install path` open question (spec §11) is resolved: OPNet engine uses CLI-only invocation. The engine wizard plugin calls the same CLI as the monitor.
+
+## 8. `blockhost-generate-signup` placeholder changes (spec §9, line 956)
+
+**Current spec placeholders:**
+```
+{{SERVER_PUBLIC_KEY}}, {{PUBLIC_SECRET}}, {{CHAIN_ID}}, {{RPC_URL}},
+{{NFT_CONTRACT}}, {{SUBSCRIPTION_CONTRACT}}, {{USDC_ADDRESS}},
+{{PAGE_TITLE}}, {{PRIMARY_COLOR}}
+```
+
+**OPNet:**
+```
+{{SERVER_PUBLIC_KEY}}, {{PUBLIC_SECRET}}, {{RPC_URL}},
+{{NFT_CONTRACT}}, {{SUBSCRIPTION_CONTRACT}}, {{PAYMENT_TOKEN}},
+{{PAGE_TITLE}}, {{PRIMARY_COLOR}}
+```
+
+- **Dropped:** `{{CHAIN_ID}}` (OPNet infers network from RPC URL), `{{USDC_ADDRESS}}`
+- **Added:** `{{PAYMENT_TOKEN}}` (generic name, replaces USDC-specific placeholder)
+- Default RPC URL: `https://regtest.opnet.org` (was Sepolia)
+- Default primary color: `#f7931a` (Bitcoin orange, was `#6366f1`)
+- Script is extensionless (`generate-signup-page`) with `#!/usr/bin/env python3` shebang
+
+The spec should note that template placeholders are engine-specific. Each engine ships its own template with the fields it needs.
+
+## 9. Script extensionless naming convention (spec §8, new)
+
+All engine scripts are installed **without file extensions**. The interpreter is determined by the shebang line:
+
+| Script | Shebang | Language |
+|--------|---------|----------|
+| `deploy-contracts` | `#!/usr/bin/env bash` | Bash |
+| `mint_nft` | `#!/usr/bin/env -S npx tsx` | TypeScript |
+| `generate-signup-page` | `#!/usr/bin/env python3` | Python |
+
+This is an abstraction boundary — consumers call scripts by name without knowing the implementation language. The spec's installed paths should drop extensions accordingly.
+
 ---
 
 ## Items explicitly NOT boundary changes
 
-- **CLI arg counts/positions** for `send`, `balance`, `withdraw`, `split`,
+- **CLI arg counts/positions** for `bw send`, `balance`, `withdraw`, `split`,
   `who`, `config stable`, `plan create`, `set encrypt` — unchanged.
 - **`ab` commands** — all signatures unchanged.
 - **`is` commands** — signatures unchanged.
