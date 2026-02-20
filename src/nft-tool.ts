@@ -224,7 +224,9 @@ async function main(): Promise<void> {
                 debug: {
                     fromAddress: from,
                     toAddress: to,
-                    utxos: debugUtxos,
+                    utxoOutputKey: debugUtxos[0]?.outputKey ?? '(none)',
+                    utxoScriptHex: debugUtxos[0]?.scriptHex ?? '(none)',
+                    utxoCount: debugUtxos.length,
                 },
             }) + '\n');
 
