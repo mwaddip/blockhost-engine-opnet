@@ -600,25 +600,55 @@ function checkImportedBalance() {
     });
 }
 
-// Top up deployer wallet from OPWallet browser extension
+// Top up deployer wallet from OPWallet browser extension (PSBT signing flow)
 function topUpWallet(mode) {
-    var address = mode === 'generate' ? window.generatedAddress : window.importedAddress;
+    var deployerAddr = mode === 'generate' ? window.generatedAddress : window.importedAddress;
     var amountInput = document.getElementById(mode === 'generate' ? 'topup-amount' : 'import-topup-amount');
     var statusEl = document.getElementById(mode === 'generate' ? 'topup-status' : 'import-topup-status');
     var btn = document.getElementById(mode === 'generate' ? 'topup-btn' : 'import-topup-btn');
 
     var sats = parseInt(amountInput.value);
-    if (!address) { statusEl.textContent = 'No deployer address'; return; }
+    if (!deployerAddr) { statusEl.textContent = 'No deployer address'; return; }
     if (!sats || sats <= 0) { statusEl.textContent = 'Enter an amount in sats'; return; }
     if (!window.opnet) { statusEl.textContent = 'OPWallet not detected — install the browser extension'; return; }
 
     btn.disabled = true;
     statusEl.textContent = 'Connecting to OPWallet...';
 
+    var senderAddress, senderPubkey;
+    var rpcUrl = document.getElementById('rpc_url').value;
+
     window.opnet.requestAccounts()
-    .then(function() {
+    .then(function(accounts) {
+        senderAddress = accounts[0];
+        statusEl.textContent = 'Getting public key...';
+        return window.opnet.getPublicKey();
+    })
+    .then(function(pubkey) {
+        senderPubkey = pubkey;
+        statusEl.textContent = 'Building transaction...';
+        var params = new URLSearchParams({
+            from: senderAddress,
+            to: deployerAddr,
+            amount: sats.toString(),
+            pubkey: senderPubkey,
+            rpc_url: rpcUrl,
+            fee_rate: '10',
+        });
+        return fetch('{{ url_for("engine_opnet.api_build_funding_psbt") }}?' + params);
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+        if (data.error) throw new Error(data.error);
         statusEl.textContent = 'Confirm in OPWallet...';
-        return window.opnet.sendBitcoin(address, sats, { feeRate: 10 });
+        return window.opnet.signPsbt(data.psbt, {
+            autoFinalized: true,
+            toSignInputs: data.toSignInputs,
+        });
+    })
+    .then(function(signedPsbtHex) {
+        statusEl.textContent = 'Broadcasting...';
+        return window.opnet.pushPsbt(signedPsbtHex);
     })
     .then(function(txid) {
         btn.disabled = false;

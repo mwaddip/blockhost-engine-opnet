@@ -226,6 +226,54 @@ def api_validate_mnemonic():
         return jsonify({"error": "Validation timed out"}), 500
 
 
+@blueprint.route("/api/blockchain/build-funding-psbt")
+def api_build_funding_psbt():
+    """Build an unsigned PSBT for a BTC transfer (for OPWallet signing)."""
+    from_addr = request.args.get("from", "").strip()
+    to_addr = request.args.get("to", "").strip()
+    amount = request.args.get("amount", "").strip()
+    pubkey = request.args.get("pubkey", "").strip()
+    rpc_url = request.args.get("rpc_url", "").strip()
+    fee_rate = request.args.get("fee_rate", "10").strip()
+
+    if not all([from_addr, to_addr, amount, pubkey, rpc_url]):
+        return jsonify({"error": "from, to, amount, pubkey, rpc_url required"}), 400
+
+    blockchain = session.get("blockchain", {})
+    network = blockchain.get("rpc_network", "regtest")
+
+    try:
+        result = subprocess.run(
+            [
+                "nft_tool", "build-funding-psbt",
+                "--from", from_addr,
+                "--to", to_addr,
+                "--amount", amount,
+                "--pubkey", pubkey,
+                "--fee-rate", fee_rate,
+                "--rpc-url", _rpc_url(rpc_url),
+                "--network", network,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            err = result.stderr.strip()
+            return jsonify({"error": err or "PSBT build failed"}), 500
+
+        data = json.loads(result.stdout)
+        return jsonify(data)
+
+    except FileNotFoundError:
+        return jsonify({"error": "nft_tool not found — is blockhost-engine installed?"}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "PSBT build timed out"}), 500
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid response from nft_tool"}), 500
+
+
 @blueprint.route("/api/blockchain/balance")
 def api_balance():
     """Check wallet BTC balance via OPNet RPC."""
