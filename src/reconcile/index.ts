@@ -7,7 +7,7 @@
 
 import { getContract, type JSONRpcProvider } from "opnet";
 import type { Network } from "@btc-vision/bitcoin";
-import { execSync, spawnSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import * as fs from "fs";
 import { getCommand } from "../provisioner";
 import { loadWeb3Config } from "../fund-manager/web3-config";
@@ -107,18 +107,22 @@ function saveVmsDatabase(db: VmsDatabase): boolean {
  */
 function markTokenMintedViaPython(tokenId: number, vmName: string): boolean {
   const script = `
+import os
 from blockhost.vm_db import get_database
 
+token_id = int(os.environ['TOKEN_ID'])
+vm_name = os.environ['VM_NAME']
 db = get_database()
-db.mark_nft_minted('${vmName}', ${tokenId})
-print(f"Marked token {${tokenId}} as minted for ${vmName}")
+db.mark_nft_minted(vm_name, token_id)
+print(f"Marked token {token_id} as minted for {vm_name}")
 `;
 
   try {
-    const result = execSync(`python3 -c "${script.replace(/"/g, '\\"')}"`, {
+    const result = execFileSync("python3", ["-c", script], {
       encoding: "utf8",
       timeout: 10000,
       cwd: "/var/lib/blockhost",
+      env: { ...process.env, TOKEN_ID: String(tokenId), VM_NAME: vmName },
     });
     console.log(`[RECONCILE] ${result.trim()}`);
     return true;

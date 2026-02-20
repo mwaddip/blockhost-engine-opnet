@@ -44,7 +44,7 @@
         </p>
         <div style="margin-bottom: 1rem;">
             <label for="public-secret-input">Message to sign</label>
-            <input type="text" id="public-secret-input" value="blockhost-access"
+            <input type="text" id="public-secret-input" value="{{ public_secret | default('blockhost-access') }}"
                    style="font-size: 0.875rem;">
             <p class="text-muted mt-1" style="font-size: 0.75rem;">
                 Your "public secret" &mdash; not a password, but you'll need to sign this same message
