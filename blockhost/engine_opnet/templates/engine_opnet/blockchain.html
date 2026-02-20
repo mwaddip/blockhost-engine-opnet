@@ -114,7 +114,7 @@
                                 <span style="font-size: 0.875rem;">sats</span>
                                 <button type="button" class="btn btn-small btn-primary"
                                         onclick="topUpWallet('generate')" id="topup-btn">
-                                    Send from OPWallet
+                                    Fund via OPWallet
                                 </button>
                             </div>
                             <div id="topup-status" class="text-muted mt-1" style="font-size: 0.75rem;"></div>
@@ -153,7 +153,7 @@
                             <span style="font-size: 0.875rem;">sats</span>
                             <button type="button" class="btn btn-small btn-primary"
                                     onclick="topUpWallet('import')" id="import-topup-btn">
-                                Send from OPWallet
+                                Fund via OPWallet
                             </button>
                         </div>
                         <div id="import-topup-status" class="text-muted mt-1" style="font-size: 0.75rem;"></div>
@@ -600,7 +600,7 @@ function checkImportedBalance() {
     });
 }
 
-// Top up deployer wallet from OPWallet browser extension (sendBitcoin API)
+// Top up deployer wallet from OPWallet browser extension
 function topUpWallet(mode) {
     var deployerAddr = mode === 'generate' ? window.generatedAddress : window.importedAddress;
     var amountInput = document.getElementById(mode === 'generate' ? 'topup-amount' : 'import-topup-amount');
@@ -615,22 +615,71 @@ function topUpWallet(mode) {
     btn.disabled = true;
     statusEl.textContent = 'Connecting to OPWallet...';
 
+    // Start balance polling immediately — works for both sendBitcoin and manual send
+    var preBalance = currentBalance;
+    var balancePollId = setInterval(function() {
+        var checkFn = mode === 'generate' ? checkBalance : checkImportedBalance;
+        checkFn();
+        setTimeout(function() {
+            if (currentBalance > preBalance) {
+                clearInterval(balancePollId);
+                var received = currentBalance - preBalance;
+                btn.disabled = false;
+                statusEl.innerHTML =
+                    '<span style="color: var(--success); font-weight: 500;">' +
+                    'Received ' + (received / 1e8).toFixed(8) + ' BTC — you can proceed.</span>';
+            }
+        }, 2000);
+    }, 10000);
+
+    console.log('[topUp] requesting accounts...');
     window.opnet.requestAccounts()
-    .then(function() {
-        statusEl.textContent = 'Confirm in OPWallet...';
-        return window.opnet.sendBitcoin(deployerAddr, sats, { feeRate: 10 });
+    .then(function(accounts) {
+        console.log('[topUp] accounts:', accounts);
+        console.log('[topUp] calling sendBitcoin:', deployerAddr, sats, '{ feeRate: 5 }');
+        statusEl.textContent = 'Confirm in OPWallet popup...';
+
+        // Race sendBitcoin against a 45-second timeout
+        var sendPromise = window.opnet.sendBitcoin(deployerAddr, sats, { feeRate: 5 });
+        var timeoutPromise = new Promise(function(_, reject) {
+            setTimeout(function() { reject(new Error('TIMEOUT')); }, 45000);
+        });
+
+        return Promise.race([sendPromise, timeoutPromise]);
     })
     .then(function(txid) {
+        console.log('[topUp] sendBitcoin succeeded, txid:', txid);
+        clearInterval(balancePollId);
         btn.disabled = false;
         showConfirmationTracker(txid, mode);
     })
     .catch(function(e) {
+        console.warn('[topUp] sendBitcoin error:', e);
         if (e.code === 4001) {
+            clearInterval(balancePollId);
             statusEl.textContent = 'Transaction rejected by user.';
+            btn.disabled = false;
+        } else if (e.message === 'TIMEOUT') {
+            // sendBitcoin hung — show address for manual send, keep polling
+            statusEl.innerHTML =
+                '<div style="padding: 0.5rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px;">' +
+                '  <div style="font-size: 0.8rem; margin-bottom: 0.5rem;">OPWallet popup did not respond. Send manually:</div>' +
+                '  <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">' +
+                '    <code id="topup-addr-copy" style="font-size: 0.78rem; word-break: break-all; flex: 1; padding: 0.3rem; background: var(--bg-secondary); border-radius: 3px;">' + deployerAddr + '</code>' +
+                '    <button type="button" class="btn btn-small" onclick="copyToClipboard(\'topup-addr-copy\', this)">Copy</button>' +
+                '  </div>' +
+                '  <div style="font-size: 0.75rem; color: var(--text-muted);">OPWallet → Send → paste address → ' + sats.toLocaleString() + ' sats → confirm</div>' +
+                '  <div style="margin-top: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">' +
+                '    <div class="spinner" style="width: 12px; height: 12px; border-width: 2px;"></div>' +
+                '    <span style="font-size: 0.75rem;">Watching for incoming transfer...</span>' +
+                '  </div>' +
+                '</div>';
+            btn.disabled = false;
         } else {
+            clearInterval(balancePollId);
             statusEl.textContent = 'Error: ' + (e.message || e);
+            btn.disabled = false;
         }
-        btn.disabled = false;
     });
 }
 
