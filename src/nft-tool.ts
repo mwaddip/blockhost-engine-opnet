@@ -165,7 +165,7 @@ async function main(): Promise<void> {
 
             const psbt = new Psbt({ network: net });
             let totalInput = 0n;
-            const toSignInputs: { index: number; publicKey: string; disableTweakSigner: boolean }[] = [];
+            const toSignInputs: { index: number; address: string; disableTweakSigner: boolean }[] = [];
 
             for (let i = 0; i < utxos.length; i++) {
                 const utxo = utxos[i]!;
@@ -177,7 +177,7 @@ async function main(): Promise<void> {
                     tapInternalKey: xOnly,
                 });
                 totalInput += utxo.value;
-                toSignInputs.push({ index: i, publicKey: pubkeyHex, disableTweakSigner: false });
+                toSignInputs.push({ index: i, address: from, disableTweakSigner: false });
             }
 
             // Estimate vsize: P2TR input ~58 vB, P2TR output ~43 vB, overhead ~11 vB
