@@ -53,6 +53,22 @@ NETWORK_RPC = {
 
 CONFIG_DIR = Path("/etc/blockhost")
 
+# OPNet JSON-RPC path (appended to base URL for direct HTTP calls)
+RPC_PATH = "/api/v1/json-rpc"
+
+
+def _rpc_url(base_url: str) -> str:
+    """Normalize an OPNet RPC base URL to the full JSON-RPC endpoint.
+
+    The opnet npm package appends /api/v1/json-rpc automatically, but
+    Python HTTP calls need the full URL.
+    """
+    url = base_url.rstrip("/")
+    if "api/v1/json-rpc" in url:
+        return url
+    return url + RPC_PATH
+
+
 # OPNet internal addresses: 0x + 64 hex (32-byte)
 INTERNAL_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
@@ -231,7 +247,7 @@ def api_balance():
         }).encode("utf-8")
 
         req = urllib.request.Request(
-            rpc_url,
+            _rpc_url(rpc_url),
             data=payload,
             headers={
                 "Content-Type": "application/json",
@@ -278,7 +294,7 @@ def api_block_info():
         }).encode("utf-8")
 
         req = urllib.request.Request(
-            rpc_url,
+            _rpc_url(rpc_url),
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -306,7 +322,7 @@ def api_block_info():
             }).encode("utf-8")
 
             req2 = urllib.request.Request(
-                rpc_url,
+                _rpc_url(rpc_url),
                 data=payload2,
                 headers={"Content-Type": "application/json"},
                 method="POST",
@@ -358,7 +374,7 @@ def api_tx_status():
         }).encode("utf-8")
 
         req = urllib.request.Request(
-            rpc_url,
+            _rpc_url(rpc_url),
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
