@@ -12,6 +12,10 @@ TEMPLATE_PKG_DIR="$SCRIPT_DIR/$TEMPLATE_PKG_NAME"
 
 echo "Building blockhost-engine-opnet v${VERSION}..."
 
+# Node.js 18 polyfill: undici (bundled via opnet) references the File global,
+# which was only added in Node.js 20. Inject a shim as an esbuild banner.
+NODE18_BANNER="if(typeof globalThis.File==='undefined'){globalThis.File=class File extends Blob{constructor(b,n,o={}){super(b,o);this.name=n;this.lastModified=o.lastModified||Date.now()}}}"
+
 # Clean up build artifacts on exit (success or failure)
 cleanup() {
   rm -rf "$PKG_DIR"
@@ -39,6 +43,7 @@ npx esbuild "$PROJECT_DIR/src/monitor/index.ts" \
     --platform=node \
     --target=node18 \
     --minify \
+    --banner:js="$NODE18_BANNER" \
     --outfile="$PKG_DIR/usr/share/blockhost/monitor.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/monitor.js" ]; then
@@ -56,6 +61,7 @@ npx esbuild "$PROJECT_DIR/src/bw/index.ts" \
     --platform=node \
     --target=node18 \
     --minify \
+    --banner:js="$NODE18_BANNER" \
     --outfile="$PKG_DIR/usr/share/blockhost/bw.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/bw.js" ]; then
@@ -106,6 +112,7 @@ npx esbuild "$PROJECT_DIR/src/is/index.ts" \
     --platform=node \
     --target=node18 \
     --minify \
+    --banner:js="$NODE18_BANNER" \
     --outfile="$PKG_DIR/usr/share/blockhost/is.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/is.js" ]; then
@@ -131,6 +138,7 @@ npx esbuild "$PROJECT_DIR/src/nft-tool.ts" \
     --platform=node \
     --target=node18 \
     --minify \
+    --banner:js="$NODE18_BANNER" \
     --outfile="$PKG_DIR/usr/share/blockhost/nft_tool.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/nft_tool.js" ]; then
@@ -292,6 +300,7 @@ npx esbuild "$PROJECT_DIR/scripts/mint_nft" \
     --platform=node \
     --target=node18 \
     --minify \
+    --banner:js="$NODE18_BANNER" \
     --loader:=ts \
     --outfile="$PKG_DIR/usr/share/blockhost/mint_nft.js"
 
