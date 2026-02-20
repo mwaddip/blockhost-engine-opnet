@@ -552,6 +552,11 @@ def get_ui_params(session_data: dict) -> dict:
     }
 
 
+def get_wallet_template() -> str:
+    """Return the template name for the engine wallet connection page."""
+    return "engine_opnet/wallet.html"
+
+
 def validate_signature(sig: str) -> bool:
     """Validate signature format (0x-prefixed hex)."""
     return bool(sig and sig.startswith("0x"))
