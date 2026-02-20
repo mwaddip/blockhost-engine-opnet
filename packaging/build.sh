@@ -1,35 +1,34 @@
 #!/bin/bash
-# Build blockhost-engine .deb package
+# Build blockhost-engine-opnet .deb package
 set -e
 
 VERSION="0.1.0"
-PKG_NAME="blockhost-engine_${VERSION}_all"
+PKG_NAME="blockhost-engine-opnet_${VERSION}_all"
 TEMPLATE_PKG_NAME="blockhost-auth-svc_${VERSION}_amd64"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PKG_DIR="$SCRIPT_DIR/$PKG_NAME"
 TEMPLATE_PKG_DIR="$SCRIPT_DIR/$TEMPLATE_PKG_NAME"
 
-echo "Building blockhost-engine v${VERSION}..."
+echo "Building blockhost-engine-opnet v${VERSION}..."
 
 # Clean up build artifacts on exit (success or failure)
 cleanup() {
   rm -rf "$PKG_DIR"
   rm -rf "$TEMPLATE_PKG_DIR"
-  rm -rf "$SCRIPT_DIR/.forge-build"
   rm -f "$SCRIPT_DIR/web3-auth-svc"
 }
 trap cleanup EXIT
 
 # Clean and recreate package directory
 rm -rf "$PKG_DIR"
-mkdir -p "$PKG_DIR"/{DEBIAN,usr/bin,usr/share/blockhost/contracts,opt/blockhost/scripts,opt/blockhost/contracts/mocks,lib/systemd/system}
+mkdir -p "$PKG_DIR"/{DEBIAN,usr/bin,usr/share/blockhost/contracts,lib/systemd/system}
 
 # ============================================
-# Bundle monitor with esbuild
+# Bundle TypeScript with esbuild
 # ============================================
 echo ""
-echo "Bundling monitor with esbuild..."
+echo "Bundling TypeScript with esbuild..."
 
 # Install dependencies first (needed for bundling)
 (cd "$PROJECT_DIR" && npm install --silent)
@@ -42,7 +41,6 @@ npx esbuild "$PROJECT_DIR/src/monitor/index.ts" \
     --minify \
     --outfile="$PKG_DIR/usr/share/blockhost/monitor.js"
 
-# Verify the bundle was created
 if [ ! -f "$PKG_DIR/usr/share/blockhost/monitor.js" ]; then
     echo "ERROR: Failed to create monitor bundle"
     exit 1
@@ -126,6 +124,31 @@ exec /usr/bin/node /usr/share/blockhost/is.js "$@"
 ISEOF
 chmod 755 "$PKG_DIR/usr/bin/is"
 
+# Bundle nft_tool CLI
+echo "Bundling nft_tool CLI with esbuild..."
+npx esbuild "$PROJECT_DIR/src/nft-tool.ts" \
+    --bundle \
+    --platform=node \
+    --target=node18 \
+    --minify \
+    --outfile="$PKG_DIR/usr/share/blockhost/nft_tool.js"
+
+if [ ! -f "$PKG_DIR/usr/share/blockhost/nft_tool.js" ]; then
+    echo "ERROR: Failed to create nft_tool CLI bundle"
+    exit 1
+fi
+
+NFT_TOOL_SIZE=$(du -h "$PKG_DIR/usr/share/blockhost/nft_tool.js" | cut -f1)
+echo "nft_tool CLI bundle created: $NFT_TOOL_SIZE"
+
+# Create nft_tool wrapper script
+cat > "$PKG_DIR/usr/bin/nft_tool" << 'NFTEOF'
+#!/bin/sh
+export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ $NODE_OPTIONS}"
+exec /usr/bin/node /usr/share/blockhost/nft_tool.js "$@"
+NFTEOF
+chmod 755 "$PKG_DIR/usr/bin/nft_tool"
+
 # ============================================
 # Compile auth-svc standalone binary with bun
 # ============================================
@@ -151,72 +174,24 @@ else
 fi
 
 # ============================================
-# Compile Solidity contracts with Foundry
+# Copy WASM contract artifacts
 # ============================================
 echo ""
-echo "Compiling Solidity contracts..."
+echo "Copying WASM contract artifacts..."
 
-FORGE_BUILD_DIR="$SCRIPT_DIR/.forge-build"
-COMPILED_ARTIFACT=""
+SUBS_WASM="$PROJECT_DIR/contracts/blockhost-subscriptions/build/BlockhostSubscriptions.wasm"
+SUBS_ABI="$PROJECT_DIR/contracts/blockhost-subscriptions/abis/BlockhostSubscriptions.abi.json"
+NFT_WASM="$PROJECT_DIR/contracts/access-credential-nft/build/AccessCredentialNFT.wasm"
+NFT_ABI="$PROJECT_DIR/contracts/access-credential-nft/abis/AccessCredentialNFT.abi.json"
 
-if command -v forge &> /dev/null; then
-    echo "Found forge: $(forge --version | head -1)"
-
-    # Create temporary forge project
-    rm -rf "$FORGE_BUILD_DIR"
-    mkdir -p "$FORGE_BUILD_DIR/src"
-
-    # Copy contract source
-    cp "$PROJECT_DIR/contracts/BlockhostSubscriptions.sol" "$FORGE_BUILD_DIR/src/"
-
-    # Create foundry.toml
-    cat > "$FORGE_BUILD_DIR/foundry.toml" << 'TOML'
-[profile.default]
-src = "src"
-out = "out"
-libs = ["lib"]
-solc_version = "0.8.20"
-optimizer = true
-optimizer_runs = 200
-TOML
-
-    # Install OpenZeppelin contracts dependency
-    echo "Installing OpenZeppelin contracts..."
-    (cd "$FORGE_BUILD_DIR" && forge install OpenZeppelin/openzeppelin-contracts --no-commit 2>/dev/null) || {
-        echo "Warning: Could not install OpenZeppelin via forge, trying alternative..."
-        mkdir -p "$FORGE_BUILD_DIR/lib"
-        git clone --depth 1 https://github.com/OpenZeppelin/openzeppelin-contracts "$FORGE_BUILD_DIR/lib/openzeppelin-contracts" 2>/dev/null || {
-            echo "Error: Could not install OpenZeppelin contracts"
-            exit 1
-        }
-    }
-
-    # Create remappings
-    echo "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/" > "$FORGE_BUILD_DIR/remappings.txt"
-
-    # Compile
-    echo "Running forge build..."
-    (cd "$FORGE_BUILD_DIR" && forge build) || {
-        echo "Error: forge build failed"
-        exit 1
-    }
-
-    # Check for compiled artifact
-    COMPILED_ARTIFACT="$FORGE_BUILD_DIR/out/BlockhostSubscriptions.sol/BlockhostSubscriptions.json"
-    if [ -f "$COMPILED_ARTIFACT" ]; then
-        echo "Contract compiled successfully: $COMPILED_ARTIFACT"
-        cp "$COMPILED_ARTIFACT" "$PKG_DIR/usr/share/blockhost/contracts/"
-        echo "Copied compiled artifact to package"
+for artifact in "$SUBS_WASM" "$SUBS_ABI" "$NFT_WASM" "$NFT_ABI"; do
+    if [ -f "$artifact" ]; then
+        cp "$artifact" "$PKG_DIR/usr/share/blockhost/contracts/"
+        echo "  Copied: $(basename "$artifact")"
     else
-        echo "Warning: Compiled artifact not found at expected path"
-        ls -la "$FORGE_BUILD_DIR/out/" 2>/dev/null || true
+        echo "  WARNING: Not found: $artifact"
     fi
-
-else
-    echo "WARNING: forge not found. Contract will not be pre-compiled."
-    echo "         Install Foundry: curl -L https://foundry.paradigm.xyz | bash && foundryup"
-    echo "         The contract source will still be included for manual compilation."
-fi
+done
 
 # ============================================
 # Create DEBIAN control files
@@ -226,21 +201,21 @@ echo "Creating DEBIAN control files..."
 
 # Create DEBIAN/control
 cat > "$PKG_DIR/DEBIAN/control" << EOF
-Package: blockhost-engine
+Package: blockhost-engine-opnet
 Version: ${VERSION}
 Section: admin
 Priority: optional
 Architecture: all
-Depends: blockhost-common (>= 0.1.0), libpam-web3-tools (>= 0.5.0), nodejs (>= 18), python3 (>= 3.10)
+Depends: blockhost-common (>= 0.1.0), nodejs (>= 18), python3 (>= 3.10)
 Recommends: blockhost-provisioner-proxmox (>= 0.1.0) | blockhost-provisioner-libvirt (>= 0.1.0)
 Maintainer: Blockhost <admin@blockhost.io>
-Description: Blockchain-based VM hosting subscription engine
- Blockhost Engine provides the core subscription management system:
- - Smart contract deployment (BlockhostSubscriptions + AccessCredentialNFT)
+Description: OPNet (Bitcoin L1) engine for Blockhost VM hosting
+ Blockhost Engine provides the core subscription management system on OPNet:
+ - WASM contract artifacts (BlockhostSubscriptions + AccessCredentialNFT)
  - Blockchain event monitor service (bundled JS, runs on Node.js)
- - Event handlers for VM provisioning
- - NFT minting CLI (blockhost-mint-nft)
- - Server initialization and signup page generation
+ - Event handlers for VM provisioning and NFT minting
+ - CLI tools: bw (wallet), ab (addressbook), is (identity), nft_tool (crypto)
+ - Installer wizard plugin for blockchain configuration
  .
  The monitor is a single bundled JavaScript file that runs on Node.js.
 EOF
@@ -258,15 +233,14 @@ case "$1" in
 
         echo ""
         echo "=========================================="
-        echo "  blockhost-engine installed successfully"
+        echo "  blockhost-engine-opnet installed"
         echo "=========================================="
         echo ""
         echo "Next steps:"
-        echo "1. Run: sudo blockhost-init"
-        echo "2. Fund the deployer wallet with ETH"
-        echo "3. Deploy contracts:"
-        echo "   cd /opt/blockhost && npm install && npx hardhat run scripts/deploy.ts --network sepolia"
-        echo "4. Run: sudo systemctl enable --now blockhost-monitor"
+        echo "1. Run the installer wizard, or manually:"
+        echo "   blockhost-deploy-contracts both"
+        echo "2. Update /etc/blockhost/web3-defaults.yaml with contract addresses"
+        echo "3. sudo systemctl enable --now blockhost-monitor"
         echo ""
         ;;
 esac
@@ -295,7 +269,6 @@ set -e
 case "$1" in
     purge)
         rm -rf /opt/blockhost/node_modules 2>/dev/null || true
-        rm -f /opt/blockhost/.env 2>/dev/null || true
         ;;
 esac
 if [ -d /run/systemd/system ]; then
@@ -311,55 +284,49 @@ chmod 755 "$PKG_DIR/DEBIAN/postinst" "$PKG_DIR/DEBIAN/prerm" "$PKG_DIR/DEBIAN/po
 # ============================================
 echo "Copying files..."
 
-# Bin scripts (init, signup generator, and deploy)
-cp "$PROJECT_DIR/scripts/init-server.sh" "$PKG_DIR/usr/bin/blockhost-init"
-cp "$PROJECT_DIR/scripts/generate-signup-page.py" "$PKG_DIR/usr/bin/blockhost-generate-signup"
-cp "$PROJECT_DIR/scripts/deploy-contracts.sh" "$PKG_DIR/usr/bin/blockhost-deploy-contracts"
+# Bin scripts
+cp "$PROJECT_DIR/scripts/generate-signup-page" "$PKG_DIR/usr/bin/blockhost-generate-signup"
+cp "$PROJECT_DIR/scripts/deploy-contracts" "$PKG_DIR/usr/bin/blockhost-deploy-contracts"
 chmod 755 "$PKG_DIR/usr/bin/"*
 
-# Install mint_nft as importable Python module (used by wizard finalization)
-mkdir -p "$PKG_DIR/usr/lib/python3/dist-packages/blockhost"
-cp "$PROJECT_DIR/scripts/mint_nft.py" "$PKG_DIR/usr/lib/python3/dist-packages/blockhost/mint_nft.py"
+# Create blockhost-mint-nft CLI wrapper (TypeScript, bundled via esbuild)
+echo "Bundling mint_nft CLI with esbuild..."
+npx esbuild "$PROJECT_DIR/scripts/mint_nft" \
+    --bundle \
+    --platform=node \
+    --target=node18 \
+    --minify \
+    --outfile="$PKG_DIR/usr/share/blockhost/mint_nft.js"
+
+if [ -f "$PKG_DIR/usr/share/blockhost/mint_nft.js" ]; then
+    cat > "$PKG_DIR/usr/bin/blockhost-mint-nft" << 'MINTEOF'
+#!/bin/sh
+export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ $NODE_OPTIONS}"
+exec /usr/bin/node /usr/share/blockhost/mint_nft.js "$@"
+MINTEOF
+    chmod 755 "$PKG_DIR/usr/bin/blockhost-mint-nft"
+    MINT_SIZE=$(du -h "$PKG_DIR/usr/share/blockhost/mint_nft.js" | cut -f1)
+    echo "mint_nft CLI bundle created: $MINT_SIZE"
+else
+    echo "WARNING: Failed to bundle mint_nft CLI"
+fi
 
 # Install engine wizard plugin (Python module + templates)
-WIZARD_SRC="$PROJECT_DIR/blockhost/engine_evm"
-WIZARD_DST="$PKG_DIR/usr/lib/python3/dist-packages/blockhost/engine_evm"
-mkdir -p "$WIZARD_DST/templates/engine_evm"
+WIZARD_SRC="$PROJECT_DIR/blockhost/engine_opnet"
+WIZARD_DST="$PKG_DIR/usr/lib/python3/dist-packages/blockhost/engine_opnet"
+mkdir -p "$WIZARD_DST/templates/engine_opnet"
 cp "$WIZARD_SRC/__init__.py" "$WIZARD_DST/"
 cp "$WIZARD_SRC/wizard.py" "$WIZARD_DST/"
-cp "$WIZARD_SRC/templates/engine_evm/"*.html "$WIZARD_DST/templates/engine_evm/"
+cp "$WIZARD_SRC/templates/engine_opnet/"*.html "$WIZARD_DST/templates/engine_opnet/"
 
 # Install engine manifest
 cp "$PROJECT_DIR/engine.json" "$PKG_DIR/usr/share/blockhost/engine.json"
-
-# Create blockhost-mint-nft CLI wrapper (used by engine's TypeScript handlers)
-cat > "$PKG_DIR/usr/bin/blockhost-mint-nft" << 'MINTEOF'
-#!/bin/sh
-exec python3 /usr/lib/python3/dist-packages/blockhost/mint_nft.py "$@"
-MINTEOF
-chmod 755 "$PKG_DIR/usr/bin/blockhost-mint-nft"
-
-# Deployment scripts (need Hardhat/Node.js for one-time deployment)
-cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$PKG_DIR/opt/blockhost/"
-cp "$PROJECT_DIR/tsconfig.json" "$PROJECT_DIR/hardhat.config.ts" "$PKG_DIR/opt/blockhost/"
-cp "$PROJECT_DIR/scripts/deploy.ts" "$PKG_DIR/opt/blockhost/scripts/"
-
-# Contract sources (for deployment/reference)
-cp "$PROJECT_DIR/contracts/BlockhostSubscriptions.sol" "$PKG_DIR/opt/blockhost/contracts/"
-cp "$PROJECT_DIR/contracts/mocks/"*.sol "$PKG_DIR/opt/blockhost/contracts/mocks/"
 
 # Static resources
 cp "$PROJECT_DIR/scripts/signup-template.html" "$PKG_DIR/usr/share/blockhost/"
 
 # Systemd service
 cp "$PROJECT_DIR/examples/blockhost-monitor.service" "$PKG_DIR/lib/systemd/system/blockhost-monitor.service"
-
-# Example env
-cat > "$PKG_DIR/opt/blockhost/.env.example" << 'ENVEOF'
-# Blockhost Monitor Configuration
-RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
-BLOCKHOST_CONTRACT=0xYourContractAddressHere
-ENVEOF
 
 # ============================================
 # Build package
@@ -377,33 +344,30 @@ dpkg-deb --info "$SCRIPT_DIR/${PKG_NAME}.deb"
 # Show what's included
 echo ""
 echo "Package contents:"
-echo "  /usr/share/blockhost/monitor.js - Bundled monitor ($MONITOR_SIZE)"
-echo "  /usr/share/blockhost/bw.js      - Bundled bw CLI ($BW_SIZE)"
-echo "  /usr/share/blockhost/ab.js      - Bundled ab CLI ($AB_SIZE)"
-echo "  /usr/share/blockhost/is.js      - Bundled is CLI ($IS_SIZE)"
-echo "  /usr/bin/bw                     - Blockwallet CLI wrapper"
-echo "  /usr/bin/ab                     - Addressbook CLI wrapper"
-echo "  /usr/bin/is                     - Identity predicate CLI wrapper"
+echo "  /usr/share/blockhost/monitor.js    - Bundled monitor ($MONITOR_SIZE)"
+echo "  /usr/share/blockhost/bw.js         - Bundled bw CLI ($BW_SIZE)"
+echo "  /usr/share/blockhost/ab.js         - Bundled ab CLI ($AB_SIZE)"
+echo "  /usr/share/blockhost/is.js         - Bundled is CLI ($IS_SIZE)"
+echo "  /usr/share/blockhost/nft_tool.js   - Bundled nft_tool CLI ($NFT_TOOL_SIZE)"
+echo "  /usr/share/blockhost/mint_nft.js   - Bundled mint_nft CLI"
+echo "  /usr/bin/bw                        - Blockwallet CLI wrapper"
+echo "  /usr/bin/ab                        - Addressbook CLI wrapper"
+echo "  /usr/bin/is                        - Identity predicate CLI wrapper"
+echo "  /usr/bin/nft_tool                  - Crypto tool CLI wrapper"
 echo "  /usr/bin/blockhost-deploy-contracts - Contract deployer script"
-echo "  /usr/bin/blockhost-mint-nft      - NFT minting CLI wrapper"
-echo "  /usr/lib/python3/dist-packages/blockhost/mint_nft.py - NFT minting module"
-echo "  /usr/lib/python3/dist-packages/blockhost/engine_evm/ - Engine wizard plugin"
-echo "  /usr/share/blockhost/engine.json - Engine manifest"
-echo "  /usr/bin/blockhost-init         - Server initialization script"
-echo "  /usr/bin/blockhost-generate-signup - Signup page generator"
-echo "  /opt/blockhost/                 - Deployment scripts (require npm install)"
-echo "  /usr/share/blockhost/contracts/ - Compiled contract artifacts"
-echo "  /lib/systemd/system/            - Systemd service unit"
+echo "  /usr/bin/blockhost-mint-nft        - NFT minting CLI wrapper"
+echo "  /usr/bin/blockhost-generate-signup  - Signup page generator"
+echo "  /usr/lib/python3/dist-packages/blockhost/engine_opnet/ - Engine wizard plugin"
+echo "  /usr/share/blockhost/engine.json   - Engine manifest"
+echo "  /usr/share/blockhost/contracts/    - WASM + ABI contract artifacts"
+echo "  /lib/systemd/system/               - Systemd service unit"
 
-# Show contract compilation status
-if [ -f "$PKG_DIR/usr/share/blockhost/contracts/BlockhostSubscriptions.json" ]; then
-    echo ""
-    echo "Compiled contract included:"
-    echo "  /usr/share/blockhost/contracts/BlockhostSubscriptions.json"
-else
-    echo ""
-    echo "WARNING: Compiled contract NOT included (forge not available)"
-fi
+# Show contract artifacts status
+echo ""
+echo "Contract artifacts:"
+for f in "$PKG_DIR/usr/share/blockhost/contracts/"*; do
+    [ -f "$f" ] && echo "  $(basename "$f") ($(du -h "$f" | cut -f1))"
+done
 
 # Copy to packages/host/ if the parent project structure exists
 # (for integration with blockhost-installer/scripts/build-packages.sh)
