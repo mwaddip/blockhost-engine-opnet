@@ -24,7 +24,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Mnemonic, AddressTypes, MLDSASecurityLevel } from '@btc-vision/transaction';
-import { Psbt, networks, toXOnly, address as btcAddress, fromHex } from '@btc-vision/bitcoin';
+import { Psbt, networks, fromHex } from '@btc-vision/bitcoin';
 import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
@@ -143,7 +143,6 @@ async function main(): Promise<void> {
             const from = flags.from;
             const to = flags.to;
             const amount = BigInt(flags.amount);
-            const pubkeyHex = (flags.pubkey || '').replace(/^0x/, '');
             const feeRate = parseFloat(flags['fee-rate'] || '10');
             const rpcUrl = flags['rpc-url'];
 
@@ -159,10 +158,6 @@ async function main(): Promise<void> {
                 throwErrors: true,
             });
 
-            // Derive tapInternalKey from the wallet's pubkey (required for key-path signing)
-            const pubkey = pubkeyHex ? fromHex(pubkeyHex) : null;
-            const tapKey = pubkey ? toXOnly(pubkey) : null;
-
             const psbt = new Psbt({ network: net });
             let totalInput = 0n;
             const toSignInputs: { index: number; address: string; disableTweakSigner: boolean }[] = [];
@@ -172,23 +167,37 @@ async function main(): Promise<void> {
                 const utxo = utxos[i]!;
                 const scriptBuf = fromHex(utxo.scriptPubKey.hex);
 
+                // Extract the 32-byte output key from the P2TR script (OP_1 <32-byte-key>)
+                // Script format: 5120<key> where 51=OP_1, 20=32 bytes push
+                const scriptHex = utxo.scriptPubKey.hex;
+                const utxoOutputKey = scriptHex.startsWith('5120')
+                    ? fromHex(scriptHex.slice(4))
+                    : null;
+
                 const inputData: Record<string, unknown> = {
                     hash: utxo.transactionId,
                     index: utxo.outputIndex,
                     witnessUtxo: { script: scriptBuf, value: utxo.value },
                 };
-                // Set tapInternalKey if we have the wallet's pubkey
-                if (tapKey) {
-                    inputData.tapInternalKey = tapKey;
+                // Use the UTXO's own output key as tapInternalKey.
+                // This is the key actually encoded in the P2TR script — it MUST
+                // be set for PsbtSigner to attempt key-path signing.
+                if (utxoOutputKey) {
+                    inputData.tapInternalKey = utxoOutputKey;
                 }
                 psbt.addInput(inputData as Parameters<typeof psbt.addInput>[0]);
                 totalInput += utxo.value;
-                toSignInputs.push({ index: i, address: from, disableTweakSigner: false });
 
-                // Debug: extract output key from P2TR script (5120<32-byte-key>)
-                const scriptHex = utxo.scriptPubKey.hex;
-                const outputKey = scriptHex.startsWith('5120') ? scriptHex.slice(4) : '(not P2TR)';
-                debugUtxos.push({ scriptHex, outputKey, value: utxo.value.toString() });
+                // disableTweakSigner: true — tell the wallet NOT to apply a BIP86
+                // tweak before signing. The wallet should sign with its raw key,
+                // whose x-only form must match the UTXO output key.
+                toSignInputs.push({ index: i, address: from, disableTweakSigner: true });
+
+                debugUtxos.push({
+                    scriptHex,
+                    outputKey: utxoOutputKey ? bytesToHex(utxoOutputKey) : '(not P2TR)',
+                    value: utxo.value.toString(),
+                });
             }
 
             // Estimate vsize: P2TR input ~58 vB, P2TR output ~43 vB, overhead ~11 vB
@@ -216,8 +225,6 @@ async function main(): Promise<void> {
                 debug: {
                     fromAddress: from,
                     toAddress: to,
-                    walletPubkey: pubkeyHex || '(not provided)',
-                    tapInternalKey: tapKey ? bytesToHex(tapKey) : '(none)',
                     utxos: debugUtxos,
                 },
             }) + '\n');

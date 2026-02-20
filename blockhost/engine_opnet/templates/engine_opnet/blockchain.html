@@ -620,19 +620,12 @@ function topUpWallet(mode) {
 
     window.opnet.requestAccounts()
     .then(function(accounts) {
-        console.log('[topUp] requestAccounts:', accounts);
         senderAddress = accounts[0];
-        return window.opnet.getPublicKey();
-    })
-    .then(function(pubkey) {
-        console.log('[topUp] getPublicKey:', pubkey);
-        console.log('[topUp] senderAddress:', senderAddress, '→ deployer:', deployerAddr);
         statusEl.textContent = 'Building transaction...';
         var params = new URLSearchParams({
             from: senderAddress,
             to: deployerAddr,
             amount: sats.toString(),
-            pubkey: pubkey,
             rpc_url: rpcUrl,
             fee_rate: '10',
         });
@@ -641,7 +634,6 @@ function topUpWallet(mode) {
     .then(function(resp) { return resp.json(); })
     .then(function(data) {
         if (data.error) throw new Error(data.error);
-        console.log('[topUp] PSBT response:', JSON.stringify(data.toSignInputs), 'fee:', data.fee);
         console.log('[topUp] PSBT debug:', data.debug);
         statusEl.textContent = 'Confirm in OPWallet...';
         return window.opnet.signPsbt(data.psbt, {
