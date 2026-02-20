@@ -41,7 +41,7 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 | `src/bw/` | TypeScript | blockwallet CLI for scriptable wallet operations |
 | `src/ab/` | TypeScript | Addressbook CLI for managing wallet entries |
 | `src/is/` | TypeScript | Identity predicate CLI (NFT ownership, signature, contract checks) |
-| `src/auth-svc/` | TypeScript | Web3 auth signing server (compiled to standalone binary for VMs) |
+| `src/auth-svc/` | TypeScript | Web3 auth signing server (esbuild-bundled JS for VMs) |
 | `src/root-agent/` | TypeScript | Client for the privileged root agent daemon |
 | `blockhost/engine_opnet/` | Python | Installer wizard plugin (blockchain config, finalization steps) |
 | `auth-svc/signing-page/` | HTML | Signing page served by auth-svc |
@@ -51,7 +51,6 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 
 - Node.js 18+
 - Python 3.10+
-- Bun (for compiling auth-svc standalone binary)
 - OPNet contract deployment tools (`@btc-vision/transaction`)
 - `blockhost-common` package (shared configuration)
 - A provisioner package (e.g. `blockhost-provisioner-proxmox`) with a manifest
@@ -305,7 +304,7 @@ All patterns are anchored regexes. If `constraints` is absent, consumers skip fo
 
 ## Auth Service (web3-auth-svc)
 
-The engine ships an HTTPS signing server as a standalone binary for VMs. It is compiled from TypeScript to a self-contained executable using `bun build --compile` — no Node.js runtime needed on VMs.
+The engine ships an HTTPS signing server as an esbuild-bundled JS file with a node wrapper for VMs. Requires Node.js >= 18 on the VM.
 
 ### How It Works
 
@@ -322,11 +321,12 @@ OPNet ML-DSA authentication — payload is self-describing JSON:
 
 ### Template Package
 
-The auth-svc ships as `blockhost-auth-svc_<version>_amd64.deb`, installed on VM templates (not the host):
+The auth-svc ships as `blockhost-auth-svc_<version>_all.deb`, installed on VM templates (not the host):
 
 | File | Purpose |
 |------|---------|
-| `/usr/bin/web3-auth-svc` | Standalone binary |
+| `/usr/share/blockhost/auth-svc.js` | Bundled JS |
+| `/usr/bin/web3-auth-svc` | Node wrapper script |
 | `/usr/share/blockhost/signing-page/index.html` | Signing page HTML |
 | `/lib/systemd/system/web3-auth-svc.service` | Systemd unit |
 | `/usr/lib/tmpfiles.d/web3-auth-svc.conf` | Creates `/run/libpam-web3/pending/` on boot |
@@ -403,7 +403,7 @@ blockhost-engine-opnet/
 │   ├── bw/                         # blockwallet CLI (send, balance, withdraw, swap, split, who, config, plan, set)
 │   ├── ab/                         # addressbook CLI (add, del, up, new, list, --init)
 │   ├── is/                         # identity predicate CLI (NFT ownership, contract)
-│   ├── auth-svc/                   # Web3 auth signing server (bun-compiled binary)
+│   ├── auth-svc/                   # Web3 auth signing server (esbuild-bundled for VMs)
 │   └── root-agent/                 # Root agent client (privilege separation)
 ├── auth-svc/                       # Auth service assets
 │   └── signing-page/               # Signing page HTML (served by auth-svc)
