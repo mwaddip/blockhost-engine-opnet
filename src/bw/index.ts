@@ -13,9 +13,8 @@
  * Debug:
  *   bw --debug --cleanup <address>   Sweep all BTC from signing wallets to <address>
  *
- * Environment:
- *   RPC_URL              — OPNet RPC endpoint URL
- *   BLOCKHOST_CONTRACT   — BlockhostSubscriptions contract address
+ * Configuration:
+ *   All config read from /etc/blockhost/web3-defaults.yaml
  */
 
 import { loadAddressbook } from '../fund-manager/addressbook.js';

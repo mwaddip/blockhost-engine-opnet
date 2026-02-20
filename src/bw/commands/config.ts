@@ -17,6 +17,7 @@ import {
     BLOCKHOST_SUBSCRIPTIONS_ABI,
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
+import { loadWeb3Config } from '../../fund-manager/web3-config.js';
 
 export async function configCommand(
     args: string[],
@@ -75,13 +76,8 @@ export async function configCommand(
         process.exit(1);
     }
 
-    const contractAddress = process.env['BLOCKHOST_CONTRACT'];
-    if (!contractAddress) {
-        console.error(
-            'Error: BLOCKHOST_CONTRACT environment variable not set',
-        );
-        process.exit(1);
-    }
+    const web3Config = loadWeb3Config();
+    const contractAddress = web3Config.subscriptionsContract;
 
     const signedContract = getContract<IBlockhostSubscriptions>(
         contractAddress,

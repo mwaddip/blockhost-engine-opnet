@@ -22,6 +22,7 @@ import {
     BLOCKHOST_SUBSCRIPTIONS_ABI,
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
+import { loadWeb3Config } from '../../fund-manager/web3-config.js';
 
 /**
  * Core withdraw operation — withdraw payment tokens from contract.
@@ -91,13 +92,8 @@ export async function withdrawCommand(
         process.exit(1);
     }
 
-    const contractAddress = process.env['BLOCKHOST_CONTRACT'];
-    if (!contractAddress) {
-        console.error(
-            'Error: BLOCKHOST_CONTRACT environment variable not set',
-        );
-        process.exit(1);
-    }
+    const web3Config = loadWeb3Config();
+    const contractAddress = web3Config.subscriptionsContract;
 
     console.log(
         `Withdrawing from contract to ${toRole}...`,

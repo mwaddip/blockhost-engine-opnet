@@ -243,7 +243,7 @@ Arguments are order-independent, disambiguated by type (address = `0x` + 64 hex,
 
 ## bw (blockwallet) CLI
 
-Standalone CLI for scriptable wallet operations. Uses the same `RPC_URL` and `BLOCKHOST_CONTRACT` env vars as the monitor.
+Standalone CLI for scriptable wallet operations. Reads config from `web3-defaults.yaml`.
 
 ```bash
 bw send <amount> <token> <from> <to>       # Send tokens between wallets

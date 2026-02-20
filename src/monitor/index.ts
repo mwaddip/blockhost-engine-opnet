@@ -159,27 +159,12 @@ async function main() {
 
   try {
     const web3Config = loadWeb3Config();
-    rpcUrl = process.env.RPC_URL || web3Config.rpcUrl;
-    contractAddress = process.env.BLOCKHOST_CONTRACT || web3Config.subscriptionsContract;
+    rpcUrl = web3Config.rpcUrl;
+    contractAddress = web3Config.subscriptionsContract;
     network = web3Config.network;
-  } catch {
-    // Fall back to env vars if web3-defaults.yaml not available
-    rpcUrl = process.env.RPC_URL || '';
-    contractAddress = process.env.BLOCKHOST_CONTRACT || '';
-
-    if (!rpcUrl) {
-      console.error("Error: RPC_URL not set and web3-defaults.yaml not found");
-      process.exit(1);
-    }
-    if (!contractAddress) {
-      console.error("Error: BLOCKHOST_CONTRACT not set and web3-defaults.yaml not found");
-      process.exit(1);
-    }
-
-    // Infer network from RPC URL
-    if (rpcUrl.includes('mainnet')) network = networks.bitcoin;
-    else if (rpcUrl.includes('testnet')) network = networks.testnet;
-    else network = networks.regtest;
+  } catch (err) {
+    console.error("Error: web3-defaults.yaml not found or invalid:", err);
+    process.exit(1);
   }
 
   console.log("==============================================");
