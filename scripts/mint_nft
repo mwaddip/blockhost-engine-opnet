@@ -27,7 +27,8 @@ import {
     MLDSASecurityLevel,
 } from '@btc-vision/transaction';
 import { getContract, JSONRpcProvider } from 'opnet';
-import { Address, networks } from '@btc-vision/bitcoin';
+import { Address } from '@btc-vision/transaction';
+import { networks } from '@btc-vision/bitcoin';
 import {
     ACCESS_CREDENTIAL_NFT_ABI,
     type IAccessCredentialNFT,

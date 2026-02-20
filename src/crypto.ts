@@ -7,10 +7,10 @@
  * Wire formats match the signup-template.html browser implementation exactly.
  */
 
-import { secp256k1 } from '@noble/curves/secp256k1';
-import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha256';
-import { shake256 } from '@noble/hashes/sha3';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { shake256 } from '@noble/hashes/sha3.js';
 import { createDecipheriv, createCipheriv, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 

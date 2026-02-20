@@ -15,8 +15,8 @@
  */
 
 import { eciesDecrypt, symmetricEncrypt, symmetricDecrypt } from './crypto.js';
-import { secp256k1 } from '@noble/curves/secp256k1';
-import { bytesToHex } from '@noble/hashes/utils';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 

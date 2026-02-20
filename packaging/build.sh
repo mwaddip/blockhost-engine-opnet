@@ -296,6 +296,7 @@ npx esbuild "$PROJECT_DIR/scripts/mint_nft" \
     --platform=node \
     --target=node18 \
     --minify \
+    --loader:=ts \
     --outfile="$PKG_DIR/usr/share/blockhost/mint_nft.js"
 
 if [ -f "$PKG_DIR/usr/share/blockhost/mint_nft.js" ]; then

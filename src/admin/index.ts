@@ -14,8 +14,8 @@
  * indexes Interaction transactions, a Bitcoin JSON-RPC fallback will be needed.
  */
 
-import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha256';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import type { JSONRpcProvider } from 'opnet';
 import type { AdminCommand, AdminConfig, CommandResult, CommandDatabase } from "./types";
 import { loadCommandDatabase } from "./config";
