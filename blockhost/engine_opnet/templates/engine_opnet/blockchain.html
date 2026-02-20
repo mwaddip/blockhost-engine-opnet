@@ -615,23 +615,17 @@ function topUpWallet(mode) {
     btn.disabled = true;
     statusEl.textContent = 'Connecting to OPWallet...';
 
-    var senderAddress, senderPubkey;
+    var senderAddress;
     var rpcUrl = document.getElementById('rpc_url').value;
 
     window.opnet.requestAccounts()
     .then(function(accounts) {
         senderAddress = accounts[0];
-        statusEl.textContent = 'Getting public key...';
-        return window.opnet.getPublicKey();
-    })
-    .then(function(pubkey) {
-        senderPubkey = pubkey;
         statusEl.textContent = 'Building transaction...';
         var params = new URLSearchParams({
             from: senderAddress,
             to: deployerAddr,
             amount: sats.toString(),
-            pubkey: senderPubkey,
             rpc_url: rpcUrl,
             fee_rate: '10',
         });

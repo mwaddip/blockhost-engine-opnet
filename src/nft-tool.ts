@@ -24,7 +24,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Mnemonic, AddressTypes, MLDSASecurityLevel } from '@btc-vision/transaction';
-import { Psbt, networks, toXOnly, address as btcAddress, fromHex } from '@btc-vision/bitcoin';
+import { Psbt, networks, address as btcAddress, fromHex } from '@btc-vision/bitcoin';
 import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
@@ -138,12 +138,11 @@ async function main(): Promise<void> {
         }
 
         case 'build-funding-psbt': {
-            requireFlags(flags, 'from', 'to', 'amount', 'pubkey', 'rpc-url');
+            requireFlags(flags, 'from', 'to', 'amount', 'rpc-url');
             const net = resolveNetwork(flags.network || 'regtest');
             const from = flags.from;
             const to = flags.to;
             const amount = BigInt(flags.amount);
-            const pubkeyHex = flags.pubkey.replace(/^0x/, '');
             const feeRate = parseFloat(flags['fee-rate'] || '10');
             const rpcUrl = flags['rpc-url'];
 
@@ -159,10 +158,7 @@ async function main(): Promise<void> {
                 throwErrors: true,
             });
 
-            // Build unsigned PSBT
-            const pubkey = fromHex(pubkeyHex);
-            const xOnly = toXOnly(pubkey);
-
+            // Build unsigned PSBT — no tapInternalKey; the wallet knows its own keys
             const psbt = new Psbt({ network: net });
             let totalInput = 0n;
             const toSignInputs: { index: number; address: string; disableTweakSigner: boolean }[] = [];
@@ -174,7 +170,6 @@ async function main(): Promise<void> {
                     hash: utxo.transactionId,
                     index: utxo.outputIndex,
                     witnessUtxo: { script: scriptBuf, value: utxo.value },
-                    tapInternalKey: xOnly,
                 });
                 totalInput += utxo.value;
                 toSignInputs.push({ index: i, address: from, disableTweakSigner: false });

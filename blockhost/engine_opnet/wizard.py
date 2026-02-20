@@ -232,12 +232,11 @@ def api_build_funding_psbt():
     from_addr = request.args.get("from", "").strip()
     to_addr = request.args.get("to", "").strip()
     amount = request.args.get("amount", "").strip()
-    pubkey = request.args.get("pubkey", "").strip()
     rpc_url = request.args.get("rpc_url", "").strip()
     fee_rate = request.args.get("fee_rate", "10").strip()
 
-    if not all([from_addr, to_addr, amount, pubkey, rpc_url]):
-        return jsonify({"error": "from, to, amount, pubkey, rpc_url required"}), 400
+    if not all([from_addr, to_addr, amount, rpc_url]):
+        return jsonify({"error": "from, to, amount, rpc_url required"}), 400
 
     blockchain = session.get("blockchain", {})
     network = blockchain.get("rpc_network", "regtest")
@@ -249,7 +248,6 @@ def api_build_funding_psbt():
                 "--from", from_addr,
                 "--to", to_addr,
                 "--amount", amount,
-                "--pubkey", pubkey,
                 "--fee-rate", fee_rate,
                 "--rpc-url", _rpc_url(rpc_url),
                 "--network", network,
