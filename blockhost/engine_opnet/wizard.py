@@ -232,6 +232,7 @@ def api_build_funding_psbt():
     from_addr = request.args.get("from", "").strip()
     to_addr = request.args.get("to", "").strip()
     amount = request.args.get("amount", "").strip()
+    pubkey = request.args.get("pubkey", "").strip()
     rpc_url = request.args.get("rpc_url", "").strip()
     fee_rate = request.args.get("fee_rate", "10").strip()
 
@@ -241,17 +242,21 @@ def api_build_funding_psbt():
     blockchain = session.get("blockchain", {})
     network = blockchain.get("rpc_network", "regtest")
 
+    cmd = [
+        "nft_tool", "build-funding-psbt",
+        "--from", from_addr,
+        "--to", to_addr,
+        "--amount", amount,
+        "--fee-rate", fee_rate,
+        "--rpc-url", _rpc_url(rpc_url),
+        "--network", network,
+    ]
+    if pubkey:
+        cmd.extend(["--pubkey", pubkey])
+
     try:
         result = subprocess.run(
-            [
-                "nft_tool", "build-funding-psbt",
-                "--from", from_addr,
-                "--to", to_addr,
-                "--amount", amount,
-                "--fee-rate", fee_rate,
-                "--rpc-url", _rpc_url(rpc_url),
-                "--network", network,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=30,

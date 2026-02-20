@@ -24,7 +24,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Mnemonic, AddressTypes, MLDSASecurityLevel } from '@btc-vision/transaction';
-import { Psbt, networks, address as btcAddress, fromHex } from '@btc-vision/bitcoin';
+import { Psbt, networks, toXOnly, address as btcAddress, fromHex } from '@btc-vision/bitcoin';
 import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
@@ -143,6 +143,7 @@ async function main(): Promise<void> {
             const from = flags.from;
             const to = flags.to;
             const amount = BigInt(flags.amount);
+            const pubkeyHex = (flags.pubkey || '').replace(/^0x/, '');
             const feeRate = parseFloat(flags['fee-rate'] || '10');
             const rpcUrl = flags['rpc-url'];
 
@@ -158,21 +159,36 @@ async function main(): Promise<void> {
                 throwErrors: true,
             });
 
-            // Build unsigned PSBT — no tapInternalKey; the wallet knows its own keys
+            // Derive tapInternalKey from the wallet's pubkey (required for key-path signing)
+            const pubkey = pubkeyHex ? fromHex(pubkeyHex) : null;
+            const tapKey = pubkey ? toXOnly(pubkey) : null;
+
             const psbt = new Psbt({ network: net });
             let totalInput = 0n;
             const toSignInputs: { index: number; address: string; disableTweakSigner: boolean }[] = [];
+            const debugUtxos: { scriptHex: string; outputKey: string; value: string }[] = [];
 
             for (let i = 0; i < utxos.length; i++) {
                 const utxo = utxos[i]!;
                 const scriptBuf = fromHex(utxo.scriptPubKey.hex);
-                psbt.addInput({
+
+                const inputData: Record<string, unknown> = {
                     hash: utxo.transactionId,
                     index: utxo.outputIndex,
                     witnessUtxo: { script: scriptBuf, value: utxo.value },
-                });
+                };
+                // Set tapInternalKey if we have the wallet's pubkey
+                if (tapKey) {
+                    inputData.tapInternalKey = tapKey;
+                }
+                psbt.addInput(inputData as Parameters<typeof psbt.addInput>[0]);
                 totalInput += utxo.value;
-                toSignInputs.push({ index: i, address: from, disableTweakSigner: true });
+                toSignInputs.push({ index: i, address: from, disableTweakSigner: false });
+
+                // Debug: extract output key from P2TR script (5120<32-byte-key>)
+                const scriptHex = utxo.scriptPubKey.hex;
+                const outputKey = scriptHex.startsWith('5120') ? scriptHex.slice(4) : '(not P2TR)';
+                debugUtxos.push({ scriptHex, outputKey, value: utxo.value.toString() });
             }
 
             // Estimate vsize: P2TR input ~58 vB, P2TR output ~43 vB, overhead ~11 vB
@@ -197,6 +213,13 @@ async function main(): Promise<void> {
                 psbt: psbt.toHex(),
                 toSignInputs,
                 fee: fee.toString(),
+                debug: {
+                    fromAddress: from,
+                    toAddress: to,
+                    walletPubkey: pubkeyHex || '(not provided)',
+                    tapInternalKey: tapKey ? bytesToHex(tapKey) : '(none)',
+                    utxos: debugUtxos,
+                },
             }) + '\n');
 
             await provider.close();
