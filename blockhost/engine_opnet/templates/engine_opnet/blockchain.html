@@ -600,7 +600,7 @@ function checkImportedBalance() {
     });
 }
 
-// Top up deployer wallet from OPWallet browser extension (PSBT signing flow)
+// Top up deployer wallet from OPWallet browser extension (sendBitcoin API)
 function topUpWallet(mode) {
     var deployerAddr = mode === 'generate' ? window.generatedAddress : window.importedAddress;
     var amountInput = document.getElementById(mode === 'generate' ? 'topup-amount' : 'import-topup-amount');
@@ -615,35 +615,10 @@ function topUpWallet(mode) {
     btn.disabled = true;
     statusEl.textContent = 'Connecting to OPWallet...';
 
-    var senderAddress;
-    var rpcUrl = document.getElementById('rpc_url').value;
-
     window.opnet.requestAccounts()
-    .then(function(accounts) {
-        senderAddress = accounts[0];
-        statusEl.textContent = 'Building transaction...';
-        var params = new URLSearchParams({
-            from: senderAddress,
-            to: deployerAddr,
-            amount: sats.toString(),
-            rpc_url: rpcUrl,
-            fee_rate: '10',
-        });
-        return fetch('{{ url_for("engine_opnet.api_build_funding_psbt") }}?' + params);
-    })
-    .then(function(resp) { return resp.json(); })
-    .then(function(data) {
-        if (data.error) throw new Error(data.error);
-        console.log('[topUp] PSBT debug:', data.debug);
+    .then(function() {
         statusEl.textContent = 'Confirm in OPWallet...';
-        return window.opnet.signPsbt(data.psbt, {
-            autoFinalized: true,
-            toSignInputs: data.toSignInputs,
-        });
-    })
-    .then(function(signedPsbtHex) {
-        statusEl.textContent = 'Broadcasting...';
-        return window.opnet.pushPsbt(signedPsbtHex);
+        return window.opnet.sendBitcoin(deployerAddr, sats, { feeRate: 10 });
     })
     .then(function(txid) {
         btn.disabled = false;
