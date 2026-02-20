@@ -53,8 +53,11 @@ NETWORK_RPC = {
 
 CONFIG_DIR = Path("/etc/blockhost")
 
-# OPNet addresses: 0x + 64 hex (32-byte internal)
-ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+# OPNet internal addresses: 0x + 64 hex (32-byte)
+INTERNAL_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+# Bitcoin bech32/bech32m addresses: bc1 (mainnet), tb1 (testnet), bcrt1 (regtest)
+BECH32_ADDRESS_RE = re.compile(r"^(bc|tb|bcrt)1[a-z0-9]{8,87}$")
 
 # Async deploy jobs (module-level, shared across requests)
 _deploy_jobs: dict = {}
@@ -66,10 +69,11 @@ _deploy_jobs: dict = {}
 
 
 def validate_address(address: str) -> bool:
-    """Validate an OPNet address (0x + 64 hex chars)."""
+    """Validate an OPNet address (0x + 64 hex) or Bitcoin bech32/bech32m address."""
     if not address or not isinstance(address, str):
         return False
-    return bool(ADDRESS_RE.match(address.strip()))
+    addr = address.strip()
+    return bool(INTERNAL_ADDRESS_RE.match(addr) or BECH32_ADDRESS_RE.match(addr))
 
 
 # ---------------------------------------------------------------------------
