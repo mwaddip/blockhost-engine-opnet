@@ -188,10 +188,9 @@ async function main(): Promise<void> {
                 psbt.addInput(inputData as Parameters<typeof psbt.addInput>[0]);
                 totalInput += utxo.value;
 
-                // disableTweakSigner: true — tell the wallet NOT to apply a BIP86
-                // tweak before signing. The wallet should sign with its raw key,
-                // whose x-only form must match the UTXO output key.
-                toSignInputs.push({ index: i, address: from, disableTweakSigner: true });
+                // disableTweakSigner: false — the wallet MUST apply its internal
+                // tweak so the signing key matches the UTXO output key.
+                toSignInputs.push({ index: i, address: from, disableTweakSigner: false });
 
                 debugUtxos.push({
                     scriptHex,
