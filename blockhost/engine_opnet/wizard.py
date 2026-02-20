@@ -140,33 +140,22 @@ def wizard_opnet():
 def api_generate_wallet():
     """Generate a new OPNet wallet (mnemonic-based).
 
-    Uses `bw` CLI or falls back to Node.js script.
+    Uses nft_tool keygen CLI (bundled with engine package).
     Returns mnemonic phrase and P2TR address.
     """
+    blockchain = session.get("blockchain", {})
+    network = blockchain.get("network", "regtest")
+
     try:
-        # Generate via ab new (which uses root agent → generateWallet)
-        # For the installer context, generate a mnemonic directly
         result = subprocess.run(
-            [
-                "npx", "tsx", "-e",
-                "import{Mnemonic,AddressTypes,MLDSASecurityLevel}"
-                "from'@btc-vision/transaction';"
-                "import{networks}from'@btc-vision/bitcoin';"
-                "import{generateMnemonic}from'bip39';"
-                "const m=generateMnemonic();"
-                "const w=new Mnemonic(m,'',networks.regtest,"
-                "MLDSASecurityLevel.LEVEL2)"
-                ".deriveOPWallet(AddressTypes.P2TR,0);"
-                "console.log(JSON.stringify({mnemonic:m,address:w.p2tr}));",
-            ],
+            ["nft_tool", "keygen", "--network", network],
             capture_output=True,
             text=True,
-            timeout=60,
-            cwd="/opt/blockhost",
+            timeout=30,
         )
 
         if result.returncode != 0:
-            return jsonify({"error": f"Wallet generation failed: {result.stderr}"}), 500
+            return jsonify({"error": f"Wallet generation failed: {result.stderr.strip()}"}), 500
 
         data = json.loads(result.stdout.strip())
         return jsonify({
@@ -176,7 +165,7 @@ def api_generate_wallet():
     except json.JSONDecodeError:
         return jsonify({"error": "Could not parse wallet output"}), 500
     except FileNotFoundError:
-        return jsonify({"error": "npx/tsx not found — is Node.js installed?"}), 500
+        return jsonify({"error": "nft_tool not found — is blockhost-engine installed?"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Wallet generation timed out"}), 500
 
@@ -198,23 +187,15 @@ def api_validate_mnemonic():
     if not re.match(r"^[a-z ]+$", mnemonic_phrase):
         return jsonify({"error": "Mnemonic must contain only lowercase words"}), 400
 
+    blockchain = session.get("blockchain", {})
+    network = blockchain.get("network", "regtest")
+
     try:
         result = subprocess.run(
-            [
-                "npx", "tsx", "-e",
-                "import{Mnemonic,AddressTypes,MLDSASecurityLevel}"
-                "from'@btc-vision/transaction';"
-                "import{networks}from'@btc-vision/bitcoin';"
-                "const m=process.env.MNEMONIC;"
-                "const w=new Mnemonic(m,'',networks.regtest,"
-                "MLDSASecurityLevel.LEVEL2)"
-                ".deriveOPWallet(AddressTypes.P2TR,0);"
-                "console.log(JSON.stringify({address:w.p2tr}));",
-            ],
+            ["nft_tool", "validate-mnemonic", "--network", network],
             capture_output=True,
             text=True,
             timeout=30,
-            cwd="/opt/blockhost",
             env={**os.environ, "MNEMONIC": mnemonic_phrase},
         )
 
@@ -224,7 +205,7 @@ def api_validate_mnemonic():
         else:
             return jsonify({"error": result.stderr.strip() or "Invalid mnemonic"}), 400
     except FileNotFoundError:
-        return jsonify({"error": "npx/tsx not found"}), 500
+        return jsonify({"error": "nft_tool not found — is blockhost-engine installed?"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Validation timed out"}), 500
 

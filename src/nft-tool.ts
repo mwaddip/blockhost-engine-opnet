@@ -12,6 +12,8 @@
  *   generate-keypair
  *   derive-pubkey      --private-key <hex>
  *   key-to-address     --key <hex>
+ *   keygen             [--network regtest|testnet|mainnet]
+ *   validate-mnemonic  [--network regtest|testnet|mainnet]  (reads MNEMONIC env var)
  */
 
 import { eciesDecrypt, symmetricEncrypt, symmetricDecrypt } from './crypto.js';
@@ -19,6 +21,9 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
+import { Mnemonic, AddressTypes, MLDSASecurityLevel } from '@btc-vision/transaction';
+import { networks } from '@btc-vision/bitcoin';
+import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
     const command = args[0] || '';
@@ -104,11 +109,36 @@ switch (command) {
         break;
     }
 
+    case 'keygen': {
+        const networkName = flags.network || 'regtest';
+        const net = networkName === 'mainnet' ? networks.bitcoin :
+                    networkName === 'testnet' ? networks.testnet : networks.regtest;
+        const mnemonic = generateMnemonic();
+        const wallet = new Mnemonic(mnemonic, '', net, MLDSASecurityLevel.LEVEL2)
+            .deriveOPWallet(AddressTypes.P2TR, 0);
+        process.stdout.write(JSON.stringify({ mnemonic, address: wallet.p2tr }) + '\n');
+        break;
+    }
+
+    case 'validate-mnemonic': {
+        const mnemonic = process.env.MNEMONIC;
+        if (!mnemonic) die('MNEMONIC environment variable not set');
+        if (!validateMnemonic(mnemonic)) die('invalid mnemonic phrase');
+        const networkName = flags.network || 'regtest';
+        const net = networkName === 'mainnet' ? networks.bitcoin :
+                    networkName === 'testnet' ? networks.testnet : networks.regtest;
+        const wallet = new Mnemonic(mnemonic, '', net, MLDSASecurityLevel.LEVEL2)
+            .deriveOPWallet(AddressTypes.P2TR, 0);
+        process.stdout.write(JSON.stringify({ address: wallet.p2tr }) + '\n');
+        break;
+    }
+
     default:
         die(
             `unknown command: ${command || '(none)'}\n` +
             'Usage: nft_tool <command> [--flags]\n' +
             'Commands: encrypt-symmetric, decrypt-symmetric, decrypt,\n' +
-            '          generate-keypair, derive-pubkey, key-to-address',
+            '          generate-keypair, derive-pubkey, key-to-address,\n' +
+            '          keygen, validate-mnemonic',
         );
 }
