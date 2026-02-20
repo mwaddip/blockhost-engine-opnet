@@ -172,7 +172,7 @@ async function main(): Promise<void> {
                     witnessUtxo: { script: scriptBuf, value: utxo.value },
                 });
                 totalInput += utxo.value;
-                toSignInputs.push({ index: i, address: from, disableTweakSigner: false });
+                toSignInputs.push({ index: i, address: from, disableTweakSigner: true });
             }
 
             // Estimate vsize: P2TR input ~58 vB, P2TR output ~43 vB, overhead ~11 vB
