@@ -234,18 +234,20 @@ def api_build_funding_psbt():
     amount = request.args.get("amount", "").strip()
     rpc_url = request.args.get("rpc_url", "").strip()
     fee_rate = request.args.get("fee_rate", "10").strip()
+    pubkey = request.args.get("pubkey", "").strip()
 
-    if not all([from_addr, to_addr, amount, rpc_url]):
-        return jsonify({"error": "from, to, amount, rpc_url required"}), 400
+    if not all([from_addr, to_addr, amount, rpc_url, pubkey]):
+        return jsonify({"error": "from, to, amount, rpc_url, pubkey required"}), 400
 
     blockchain = session.get("blockchain", {})
-    network = blockchain.get("rpc_network", "regtest")
+    network = blockchain.get("network", "regtest")
 
     cmd = [
         "nft_tool", "build-funding-psbt",
         "--from", from_addr,
         "--to", to_addr,
         "--amount", amount,
+        "--pubkey", pubkey,
         "--fee-rate", fee_rate,
         "--rpc-url", _rpc_url(rpc_url),
         "--network", network,

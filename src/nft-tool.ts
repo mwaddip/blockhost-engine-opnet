@@ -14,8 +14,9 @@
  *   key-to-address     --key <hex>
  *   keygen             [--network regtest|testnet|mainnet]
  *   validate-mnemonic  [--network regtest|testnet|mainnet]  (reads MNEMONIC env var)
- *   build-funding-psbt --from <addr> --to <addr> --amount <sats> --pubkey <hex>
+ *   build-funding-psbt --from <addr> --to <addr> --amount <sats> --pubkey <compressed-hex>
  *                      --rpc-url <url> [--fee-rate <n>] [--network regtest|testnet|mainnet]
+ *                      Uses FundingTransaction to build an unsigned PSBT for OPWallet signing.
  */
 
 import { eciesDecrypt, symmetricEncrypt, symmetricDecrypt } from './crypto.js';
@@ -24,7 +25,8 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Mnemonic, AddressTypes, MLDSASecurityLevel } from '@btc-vision/transaction';
-import { Psbt, networks, fromHex } from '@btc-vision/bitcoin';
+import { networks, type Psbt } from '@btc-vision/bitcoin';
+import type { Signer } from '@btc-vision/ecpair';
 import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
@@ -138,13 +140,14 @@ async function main(): Promise<void> {
         }
 
         case 'build-funding-psbt': {
-            requireFlags(flags, 'from', 'to', 'amount', 'rpc-url');
+            requireFlags(flags, 'from', 'to', 'amount', 'pubkey', 'rpc-url');
             const net = resolveNetwork(flags.network || 'regtest');
-            const from = flags.from;
-            const to = flags.to;
-            const amount = BigInt(flags.amount);
+            const from = flags.from!;
+            const to = flags.to!;
+            const amount = BigInt(flags.amount!);
             const feeRate = parseFloat(flags['fee-rate'] || '10');
-            const rpcUrl = flags['rpc-url'];
+            const rpcUrl = flags['rpc-url']!;
+            const pubkeyHex = flags.pubkey!.replace(/^0x/, '');
 
             // Fetch UTXOs via opnet provider
             const { JSONRpcProvider } = await import('opnet');
@@ -158,76 +161,51 @@ async function main(): Promise<void> {
                 throwErrors: true,
             });
 
-            const psbt = new Psbt({ network: net });
-            let totalInput = 0n;
-            const toSignInputs: { index: number; address: string; disableTweakSigner: boolean }[] = [];
-            const debugUtxos: { scriptHex: string; outputKey: string; value: string }[] = [];
+            // Dummy signer: only publicKey is used (for tapInternalKey derivation).
+            // No signing happens server-side — OPWallet signs via signPsbt().
+            const pubkeyBuf = Uint8Array.from(Buffer.from(pubkeyHex, 'hex'));
+            const dummySigner = {
+                publicKey: pubkeyBuf,
+                sign: () => { throw new Error('server-side signing not available'); },
+                signSchnorr: () => { throw new Error('server-side signing not available'); },
+            } as unknown as Signer;
 
-            for (let i = 0; i < utxos.length; i++) {
-                const utxo = utxos[i]!;
-                const scriptBuf = fromHex(utxo.scriptPubKey.hex);
+            // Build unsigned PSBT via FundingTransaction
+            const { FundingTransaction } = await import('@btc-vision/transaction');
 
-                // Extract the 32-byte output key from the P2TR script (OP_1 <32-byte-key>)
-                // Script format: 5120<key> where 51=OP_1, 20=32 bytes push
-                const scriptHex = utxo.scriptPubKey.hex;
-                const utxoOutputKey = scriptHex.startsWith('5120')
-                    ? fromHex(scriptHex.slice(4))
-                    : null;
-
-                const inputData: Record<string, unknown> = {
-                    hash: utxo.transactionId,
-                    index: utxo.outputIndex,
-                    witnessUtxo: { script: scriptBuf, value: utxo.value },
-                };
-                // Use the UTXO's own output key as tapInternalKey.
-                // This is the key actually encoded in the P2TR script — it MUST
-                // be set for PsbtSigner to attempt key-path signing.
-                if (utxoOutputKey) {
-                    inputData.tapInternalKey = utxoOutputKey;
-                }
-                psbt.addInput(inputData as Parameters<typeof psbt.addInput>[0]);
-                totalInput += utxo.value;
-
-                // disableTweakSigner: false — the wallet MUST apply its internal
-                // tweak so the signing key matches the UTXO output key.
-                toSignInputs.push({ index: i, address: from, disableTweakSigner: false });
-
-                debugUtxos.push({
-                    scriptHex,
-                    outputKey: utxoOutputKey ? bytesToHex(utxoOutputKey) : '(not P2TR)',
-                    value: utxo.value.toString(),
-                });
+            // Subclass to expose the protected transaction (Psbt) property
+            class UnsignedFundingTx extends FundingTransaction {
+                public getUnsignedPsbt(): Psbt { return this.transaction; }
             }
 
-            // Estimate vsize: P2TR input ~58 vB, P2TR output ~43 vB, overhead ~11 vB
-            const outputCount = 2; // recipient + change (conservative)
-            const estimatedVsize = utxos.length * 58 + outputCount * 43 + 11;
-            const fee = BigInt(Math.ceil(estimatedVsize * feeRate));
+            const fundingTx = new UnsignedFundingTx({
+                utxos,
+                amount,
+                to,
+                from,
+                signer: dummySigner,
+                mldsaSigner: null,
+                network: net,
+                feeRate,
+                priorityFee: 0n,
+                gasSatFee: 0n,
+                noSignatures: true,
+            });
 
-            if (totalInput < amount + fee) {
-                die(`insufficient funds: have ${totalInput} sats, need ${amount + fee} (amount + fee)`);
-            }
+            // Populates the Psbt with inputs + outputs without signing or finalizing
+            await fundingTx.generateTransactionMinimalSignatures();
 
-            // Recipient output
-            psbt.addOutput({ address: to, value: amount });
-
-            // Change output (skip if below dust threshold)
-            const change = totalInput - amount - fee;
-            if (change > 330n) {
-                psbt.addOutput({ address: from, value: change });
-            }
+            const psbt = fundingTx.getUnsignedPsbt();
+            const toSignInputs = utxos.map((_: unknown, i: number) => ({
+                index: i,
+                address: from,
+                disableTweakSigner: false,
+            }));
 
             process.stdout.write(JSON.stringify({
                 psbt: psbt.toHex(),
                 toSignInputs,
-                fee: fee.toString(),
-                debug: {
-                    fromAddress: from,
-                    toAddress: to,
-                    utxoOutputKey: debugUtxos[0]?.outputKey ?? '(none)',
-                    utxoScriptHex: debugUtxos[0]?.scriptHex ?? '(none)',
-                    utxoCount: debugUtxos.length,
-                },
+                fee: fundingTx.estimatedFees.toString(),
             }) + '\n');
 
             await provider.close();

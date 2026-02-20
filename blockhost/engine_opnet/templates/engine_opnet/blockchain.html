@@ -600,7 +600,7 @@ function checkImportedBalance() {
     });
 }
 
-// Top up deployer wallet from OPWallet browser extension
+// Top up deployer wallet from OPWallet browser extension (signPsbt flow)
 function topUpWallet(mode) {
     var deployerAddr = mode === 'generate' ? window.generatedAddress : window.importedAddress;
     var amountInput = document.getElementById(mode === 'generate' ? 'topup-amount' : 'import-topup-amount');
@@ -615,7 +615,7 @@ function topUpWallet(mode) {
     btn.disabled = true;
     statusEl.textContent = 'Connecting to OPWallet...';
 
-    // Start balance polling immediately — works for both sendBitcoin and manual send
+    // Start balance polling immediately
     var preBalance = currentBalance;
     var balancePollId = setInterval(function() {
         var checkFn = mode === 'generate' ? checkBalance : checkImportedBalance;
@@ -632,48 +632,69 @@ function topUpWallet(mode) {
         }, 2000);
     }, 10000);
 
+    var userAddress = null;
+    var userPubkey = null;
+
     console.log('[topUp] requesting accounts...');
     window.opnet.requestAccounts()
     .then(function(accounts) {
         console.log('[topUp] accounts:', accounts);
-        console.log('[topUp] calling sendBitcoin:', deployerAddr, sats, '{ feeRate: 5 }');
+        userAddress = accounts[0];
+        return window.opnet.getPublicKey();
+    })
+    .then(function(pubkey) {
+        console.log('[topUp] pubkey:', pubkey);
+        userPubkey = pubkey;
+        statusEl.textContent = 'Building transaction...';
+
+        // Ask server to build an unsigned PSBT via FundingTransaction
+        var rpcUrl = document.getElementById('rpc_url').value;
+        var url = '{{ url_for("engine_opnet.api_build_funding_psbt") }}' +
+            '?from=' + encodeURIComponent(userAddress) +
+            '&to=' + encodeURIComponent(deployerAddr) +
+            '&amount=' + sats +
+            '&pubkey=' + encodeURIComponent(userPubkey) +
+            '&rpc_url=' + encodeURIComponent(rpcUrl);
+
+        return fetch(url).then(function(r) { return r.json(); });
+    })
+    .then(function(data) {
+        if (data.error) throw new Error(data.error);
+
+        console.log('[topUp] PSBT built, fee:', data.fee, 'sats');
         statusEl.textContent = 'Confirm in OPWallet popup...';
 
-        // Race sendBitcoin against a 45-second timeout
-        var sendPromise = window.opnet.sendBitcoin(deployerAddr, sats, { feeRate: 5 });
-        var timeoutPromise = new Promise(function(_, reject) {
-            setTimeout(function() { reject(new Error('TIMEOUT')); }, 45000);
+        // Send unsigned PSBT to OPWallet for signing
+        return window.opnet.signPsbt(data.psbt, {
+            autoFinalized: true,
+            toSignInputs: data.toSignInputs,
         });
-
-        return Promise.race([sendPromise, timeoutPromise]);
     })
-    .then(function(txid) {
-        console.log('[topUp] sendBitcoin succeeded, txid:', txid);
+    .then(function(signedResult) {
+        console.log('[topUp] signPsbt result:', typeof signedResult === 'string' ? signedResult.slice(0, 40) + '...' : signedResult);
         clearInterval(balancePollId);
         btn.disabled = false;
-        showConfirmationTracker(txid, mode);
+
+        // signPsbt may return a txid string or a signed PSBT hex.
+        // Start polling for balance change either way.
+        var txid = typeof signedResult === 'string' && signedResult.length === 64
+            ? signedResult : null;
+        if (txid) {
+            showConfirmationTracker(txid, mode);
+        } else {
+            statusEl.innerHTML =
+                '<div style="display: flex; align-items: center; gap: 0.5rem;">' +
+                '  <div class="spinner" style="width: 12px; height: 12px; border-width: 2px;"></div>' +
+                '  <span style="font-size: 0.8rem;">Transaction signed — waiting for confirmation...</span>' +
+                '</div>';
+            // Keep balance polling running — it will detect the incoming BTC
+        }
     })
     .catch(function(e) {
-        console.warn('[topUp] sendBitcoin error:', e);
+        console.warn('[topUp] error:', e);
         if (e.code === 4001) {
             clearInterval(balancePollId);
             statusEl.textContent = 'Transaction rejected by user.';
-            btn.disabled = false;
-        } else if (e.message === 'TIMEOUT') {
-            // sendBitcoin hung — show address for manual send, keep polling
-            statusEl.innerHTML =
-                '<div style="padding: 0.5rem; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px;">' +
-                '  <div style="font-size: 0.8rem; margin-bottom: 0.5rem;">OPWallet popup did not respond. Send manually:</div>' +
-                '  <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">' +
-                '    <code id="topup-addr-copy" style="font-size: 0.78rem; word-break: break-all; flex: 1; padding: 0.3rem; background: var(--bg-secondary); border-radius: 3px;">' + deployerAddr + '</code>' +
-                '    <button type="button" class="btn btn-small" onclick="copyToClipboard(\'topup-addr-copy\', this)">Copy</button>' +
-                '  </div>' +
-                '  <div style="font-size: 0.75rem; color: var(--text-muted);">OPWallet → Send → paste address → ' + sats.toLocaleString() + ' sats → confirm</div>' +
-                '  <div style="margin-top: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">' +
-                '    <div class="spinner" style="width: 12px; height: 12px; border-width: 2px;"></div>' +
-                '    <span style="font-size: 0.75rem;">Watching for incoming transfer...</span>' +
-                '  </div>' +
-                '</div>';
             btn.disabled = false;
         } else {
             clearInterval(balancePollId);
