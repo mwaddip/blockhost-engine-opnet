@@ -18,6 +18,7 @@
     "@btc-vision/bitcoin": "7.0.0-alpha.11",
     "@btc-vision/ecpair": "4.0.2",
     "@btc-vision/bip32": "7.0.2",
+    "blockhost-runner": "file:../blockhost-runner",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
@@ -28,6 +29,6 @@
   },
   "overrides": {},
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22"
   }
 }

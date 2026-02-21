@@ -6,9 +6,9 @@ Blockchain-based VM hosting subscription system. Users purchase subscriptions on
 
 1. **User visits signup page** - Connects wallet, signs message, purchases subscription
 2. **Smart contract emits event** - SubscriptionCreated with encrypted user data
-3. **Monitor service detects event** - Triggers VM provisioning
-4. **VM is created** - With web3-only SSH authentication (no passwords, no keys)
-5. **NFT is minted** - Contains embedded signing page for authentication
+3. **Monitor service detects event** - Enqueues to subscription pipeline
+4. **Pipeline provisions VM** - With web3-only SSH authentication (no passwords, no keys)
+5. **Pipeline mints NFT** - Contains embedded signing page for authentication
 6. **User authenticates** - Signs with wallet on VM's signing page, gets OTP, SSHs in
 
 ## Architecture
@@ -34,7 +34,7 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 |-----------|----------|-------------|
 | `contracts/` | AssemblyScript | Subscription + NFT contracts (compiled to WASM) |
 | `src/monitor/` | TypeScript | Blockchain event watcher |
-| `src/handlers/` | TypeScript | Event handlers calling VM provisioning |
+| `src/handlers/` | TypeScript | Event handlers (thin dispatch to pipeline, inline extend/cancel) |
 | `src/admin/` | TypeScript | On-chain admin commands (port knocking, etc.) |
 | `src/reconcile/` | TypeScript | NFT state reconciliation and ownership transfer detection |
 | `src/fund-manager/` | TypeScript | Automated fund withdrawal, revenue sharing, gas management |
@@ -49,12 +49,12 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 22+
 - Python 3.10+
 - OPNet contract deployment tools (`@btc-vision/transaction`)
 - `blockhost-common` package (shared configuration)
+- `blockhost-runner` package (subscription pipeline state machine)
 - A provisioner package (e.g. `blockhost-provisioner-proxmox`) with a manifest
-- `libpam-web3-tools` >= 0.5.0 (provides NFT contract and CLI tools)
 
 ## Quick Start
 
@@ -304,7 +304,7 @@ All patterns are anchored regexes. If `constraints` is absent, consumers skip fo
 
 ## Auth Service (web3-auth-svc)
 
-The engine ships an HTTPS signing server as an esbuild-bundled JS file with a node wrapper for VMs. Requires Node.js >= 18 on the VM.
+The engine ships an HTTPS signing server as an esbuild-bundled JS file with a node wrapper for VMs. Requires Node.js >= 22 on the VM.
 
 ### How It Works
 
@@ -394,12 +394,12 @@ blockhost-engine-opnet/
 ├── engine.json                     # Engine manifest (identity, wizard plugin, constraints)
 ├── src/                            # TypeScript source
 │   ├── monitor/                    # OPNet blockchain event monitor
-│   ├── handlers/                   # Event handlers (NFT reservation, VM provisioning, minting)
+│   ├── handlers/                   # Event handlers (thin dispatch to pipeline, inline extend/cancel)
 │   ├── admin/                      # On-chain admin commands (HMAC OP_RETURN)
 │   ├── reconcile/                  # NFT state reconciliation + GECOS sync
 │   ├── fund-manager/               # Automated fund withdrawal & distribution
 │   ├── crypto.ts                   # Native ECIES + SHAKE256 (replaces pam_web3_tool)
-│   ├── nft-tool.ts                 # nft_tool CLI (wraps crypto.ts)
+│   ├── bhcrypt/                    # bhcrypt CLI (wraps crypto.ts)
 │   ├── bw/                         # blockwallet CLI (send, balance, withdraw, swap, split, who, config, plan, set)
 │   ├── ab/                         # addressbook CLI (add, del, up, new, list, --init)
 │   ├── is/                         # identity predicate CLI (NFT ownership, contract)
@@ -423,5 +423,5 @@ MIT
 
 - `blockhost-common` - Shared configuration and Python modules
 - `blockhost-provisioner-proxmox` - VM provisioning scripts (Proxmox/Terraform)
-- `libpam-web3-tools` - NFT contract, signing page, and CLI tools
+- `blockhost-runner` - Subscription pipeline state machine (provision → mint → complete)
 - `libpam-web3` - PAM module for web3 authentication (installed on VMs)
