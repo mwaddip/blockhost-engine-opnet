@@ -55,7 +55,7 @@ export async function sendBTC(
 
         // 3. Build + sign via OPWallet (null signers)
         const result = await factory.createBTCTransfer({
-            signer: null as any,
+            signer: null,
             mldsaSigner: null,
             network,
             utxos,
