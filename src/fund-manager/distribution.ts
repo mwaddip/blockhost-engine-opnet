@@ -109,14 +109,17 @@ export async function distributeRevenueShares(
     return;
   }
 
+  // Resolve total_bps (with fallback from deprecated total_percent)
+  const totalBps = revenueConfig.total_bps ?? Math.round((revenueConfig.total_percent ?? 0) * 100);
+  if (totalBps <= 0) return;
+
   const balances = await getAllTokenBalances(book.hot!.address, contract, provider, network);
 
   for (const tb of balances) {
     if (tb.balance === 0n) continue;
 
-    // Calculate total share amount
-    const totalShareAmount =
-      (tb.balance * BigInt(Math.round(revenueConfig.total_percent * 100))) / 10000n;
+    // Calculate total share amount using integer basis points (no float math)
+    const totalShareAmount = (tb.balance * BigInt(totalBps)) / 10000n;
     if (totalShareAmount === 0n) continue;
 
     // Distribute to each recipient
@@ -129,11 +132,13 @@ export async function distributeRevenueShares(
         continue;
       }
 
+      // Resolve recipient bps (with fallback from deprecated percent)
+      const recipientBps = recipient.bps ?? Math.round((recipient.percent ?? 0) * 100);
+
       const isLast = i === revenueConfig.recipients.length - 1;
       const share = isLast
         ? totalShareAmount - distributed
-        : (totalShareAmount * BigInt(Math.round(recipient.percent * 100))) /
-          BigInt(Math.round(revenueConfig.total_percent * 100));
+        : (totalShareAmount * BigInt(recipientBps)) / BigInt(totalBps);
       distributed += share;
       if (share === 0n) continue;
 
@@ -141,7 +146,7 @@ export async function distributeRevenueShares(
         const shareStr = formatUnits(share, tb.decimals);
         await executeSend(shareStr, tb.tokenAddress, "hot", recipient.role, book, provider, contract, network);
         console.log(
-          `[FUND] Revenue share: sent ${shareStr} ${tb.symbol} to ${recipient.role} (${recipient.percent}%)`
+          `[FUND] Revenue share: sent ${shareStr} ${tb.symbol} to ${recipient.role} (${recipientBps} bps)`
         );
       } catch (err) {
         console.error(`[FUND] Error sending revenue share to ${recipient.role}: ${err}`);

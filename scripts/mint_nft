@@ -181,6 +181,10 @@ async function main(): Promise<void> {
 
     const challenge = await provider.getChallenge();
 
+    // Dynamic fee rate from network
+    const gas = await provider.gasParameters();
+    const feeRate = gas.bitcoin.recommended.medium;
+
     // Sign the interaction transaction
     const factory = new TransactionFactory();
     const interactionParams: IInteractionParameters = {
@@ -190,7 +194,7 @@ async function main(): Promise<void> {
         signer: wallet.keypair,
         mldsaSigner: wallet.mldsaKeypair,
         network: network,
-        feeRate: 15,
+        feeRate,
         priorityFee: 10_000n,
         gasSatFee: 50_000n,
         calldata: sim.calldata!,

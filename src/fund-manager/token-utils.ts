@@ -124,7 +124,6 @@ export async function transferToken(
         mldsaSigner: wallet.mldsaKeypair,
         refundTo: wallet.p2tr,
         maximumAllowedSatToSpend: 100_000n,
-        feeRate: 15,
         network,
     });
 }

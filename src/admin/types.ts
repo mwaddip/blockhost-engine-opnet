@@ -7,7 +7,7 @@ import type { ChildProcess } from "child_process";
 /**
  * Admin command payload (parsed from OP_RETURN)
  *
- * Wire format: "{nonce} {command}" + HMAC-SHA256(sharedKey)[:8 bytes]
+ * Wire format: "{nonce} {command}" + HMAC-SHA256(sharedKey)[:16 bytes]
  */
 export interface AdminCommand {
   command: string;           // Command text (maps to action in command database)
@@ -29,7 +29,7 @@ export interface KnockParams {
 export interface AdminConfig {
   wallet_address: string;           // Admin wallet (0x + 64 hex, OPNet internal format)
   shared_key: string;               // HMAC shared key (32-byte hex, no prefix)
-  max_command_age?: number;         // Reject commands from blocks older than N seconds (default: 300)
+  max_command_age?: number;         // Deprecated: pruning is now block-height based (~1 year). Kept for config compat.
 }
 
 /**

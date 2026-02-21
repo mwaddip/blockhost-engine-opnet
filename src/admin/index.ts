@@ -2,9 +2,9 @@
  * Admin command dispatcher — HMAC-authenticated OP_RETURN protocol.
  *
  * Protocol:
- *   OP_RETURN payload = message_bytes + hmac_suffix(8 bytes)
+ *   OP_RETURN payload = message_bytes + hmac_suffix(16 bytes)
  *   message = "{nonce} {command text}" (UTF-8)
- *   hmac_suffix = HMAC-SHA256(shared_key, message_bytes)[:8]
+ *   hmac_suffix = HMAC-SHA256(shared_key, message_bytes)[:16]
  *
  * Shared key: shake256(adminSchnorrSignature, {dkLen: 32}) — stored during
  * initial admin setup in blockhost.yaml under admin.shared_key.
@@ -102,15 +102,15 @@ function extractOpReturnData(scriptHex: string): Uint8Array | null {
  * @returns Parsed command or null if HMAC verification fails
  */
 export function parseOpReturnCommand(payload: Uint8Array, sharedKey: string): AdminCommand | null {
-  // Minimum: 1 (nonce) + 1 (space) + 1 (command) + 8 (hmac) = 11 bytes
-  if (payload.length < 11) return null;
+  // Minimum: 1 (nonce) + 1 (space) + 1 (command) + 16 (hmac) = 19 bytes
+  if (payload.length < 19) return null;
 
-  const message = payload.slice(0, payload.length - 8);
-  const hmacSuffix = payload.slice(payload.length - 8);
+  const message = payload.slice(0, payload.length - 16);
+  const hmacSuffix = payload.slice(payload.length - 16);
 
-  // Verify HMAC-SHA256 truncated to 8 bytes
+  // Verify HMAC-SHA256 truncated to 16 bytes (128-bit)
   const keyBytes = hexToBytes(sharedKey);
-  const expectedHmac = hmac(sha256, keyBytes, message).slice(0, 8);
+  const expectedHmac = hmac(sha256, keyBytes, message).slice(0, 16);
 
   if (!timingSafeEqual(hmacSuffix, expectedHmac)) {
     return null; // HMAC mismatch — not an admin command

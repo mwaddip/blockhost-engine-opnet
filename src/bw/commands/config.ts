@@ -100,7 +100,6 @@ export async function configCommand(
         mldsaSigner: serverWallet.mldsaKeypair,
         refundTo: serverWallet.p2tr,
         maximumAllowedSatToSpend: 100_000n,
-        feeRate: 15,
         network,
     });
 

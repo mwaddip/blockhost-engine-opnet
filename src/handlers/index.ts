@@ -75,16 +75,8 @@ function calculateExpiryDays(expiresAtBlock: bigint, currentBlock?: bigint): num
 /**
  * Decrypt userEncrypted data using the server's private key (native ECIES).
  * Returns the decrypted user signature, or null if decryption fails.
- *
- * For testing: if the data looks like a raw signature (0x + 130 hex chars), use it directly.
  */
 function decryptUserSignature(userEncrypted: string): string | null {
-  // Check if it's a raw signature (65 bytes = 130 hex chars + 0x prefix)
-  if (userEncrypted.startsWith("0x") && userEncrypted.length === 132) {
-    console.log("[INFO] Using raw signature (no decryption needed)");
-    return userEncrypted;
-  }
-
   try {
     const privateKey = loadServerPrivateKey();
     return eciesDecrypt(privateKey, userEncrypted);
@@ -366,8 +358,14 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
   const mintResult = await runCommand("blockhost-mint-nft", mintArgs);
 
   if (mintResult.code === 0) {
-    console.log(`[OK] NFT minted for ${vmName}`);
-    markNftMinted(summary.nft_token_id, event.subscriber);
+    // Parse the actual minted token ID from stdout (authoritative, not predicted)
+    const mintedId = parseInt(mintResult.stdout.trim(), 10);
+    const actualTokenId = isNaN(mintedId) ? summary.nft_token_id : mintedId;
+    if (!isNaN(mintedId) && mintedId !== nftTokenId) {
+      console.log(`[INFO] Minted token ID ${mintedId} differs from reserved ${nftTokenId} (post-burn divergence corrected)`);
+    }
+    console.log(`[OK] NFT minted for ${vmName} (token #${actualTokenId})`);
+    markNftMinted(actualTokenId, event.subscriber);
   } else {
     // VM exists and is functional, but NFT minting failed
     console.error(`[WARN] NFT minting failed for ${vmName} (VM is still operational)`);

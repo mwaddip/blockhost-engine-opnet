@@ -13,12 +13,18 @@ export type Addressbook = Record<string, AddressbookEntry>;
 
 export interface RevenueShareRecipient {
     role: string;
-    percent: number;
+    /** Recipient's share in basis points (100 = 1%). Integer only. */
+    bps: number;
+    /** @deprecated Use bps instead. Kept for config migration. */
+    percent?: number;
 }
 
 export interface RevenueShareConfig {
     enabled: boolean;
-    total_percent: number;
+    /** Total revenue share in basis points (100 = 1%). Integer only. */
+    total_bps: number;
+    /** @deprecated Use total_bps instead. Kept for config migration. */
+    total_percent?: number;
     recipients: RevenueShareRecipient[];
 }
 

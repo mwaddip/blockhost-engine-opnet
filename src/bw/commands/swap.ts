@@ -128,7 +128,6 @@ async function ensureAllowance(
         mldsaSigner: wallet.mldsaKeypair,
         refundTo: wallet.p2tr,
         maximumAllowedSatToSpend: 100_000n,
-        feeRate: 15,
         network,
     });
     console.log('  Allowance set.');
@@ -236,7 +235,6 @@ async function executeMotoSwap(
         mldsaSigner: wallet.mldsaKeypair,
         refundTo: wallet.p2tr,
         maximumAllowedSatToSpend: 100_000n,
-        feeRate: 15,
         network,
     });
 }
@@ -313,7 +311,6 @@ async function executeNativeSwapBuy(
         mldsaSigner: wallet.mldsaKeypair,
         refundTo: wallet.p2tr,
         maximumAllowedSatToSpend: satsIn + 100_000n, // swap amount + gas headroom
-        feeRate: 15,
         network,
     });
     console.log(`  Reserved at block ${preBlock}. Waiting for next block...`);
@@ -334,7 +331,6 @@ async function executeNativeSwapBuy(
         mldsaSigner: wallet.mldsaKeypair,
         refundTo: wallet.p2tr,
         maximumAllowedSatToSpend: 100_000n,
-        feeRate: 15,
         network,
     });
 }
@@ -424,7 +420,6 @@ async function executeNativeSwapSell(
         mldsaSigner: wallet.mldsaKeypair,
         refundTo: wallet.p2tr,
         maximumAllowedSatToSpend: 100_000n,
-        feeRate: 15,
         network,
     });
 

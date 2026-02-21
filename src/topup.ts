@@ -5,9 +5,11 @@
  * Uses TransactionFactory.createBTCTransfer() with null signers —
  * OPWallet intercepts and prompts the user to sign.
  */
-import { TransactionFactory } from '@btc-vision/transaction';
+import { TransactionFactory, type IFundingTransactionParameters } from '@btc-vision/transaction';
 import { JSONRpcProvider } from 'opnet';
 import { networks } from '@btc-vision/bitcoin';
+
+declare const window: Record<string, unknown>;
 
 function resolveNetwork(name: string) {
     return name === 'mainnet' ? networks.bitcoin :
@@ -33,7 +35,7 @@ export async function sendBTC(
     toAddress: string,
     amountSats: number,
 ): Promise<TopUpResult> {
-    const opnet = (window as any).opnet;
+    const opnet = window.opnet as { requestAccounts(): Promise<string[]> } | undefined;
     if (!opnet) throw new Error('OPWallet not detected');
 
     const network = resolveNetwork(networkName);
@@ -42,9 +44,9 @@ export async function sendBTC(
 
     try {
         // 1. Get connected wallet address
-        const accounts: string[] = await opnet.requestAccounts();
+        const accounts = await opnet.requestAccounts();
         if (!accounts.length) throw new Error('No accounts returned from OPWallet');
-        const userAddress = accounts[0];
+        const userAddress = accounts[0]!;
 
         // 2. Fetch UTXOs
         const utxos = await provider.utxoManager.getUTXOs({
@@ -53,7 +55,11 @@ export async function sendBTC(
         });
         if (!utxos.length) throw new Error('No UTXOs available — wallet has no BTC');
 
-        // 3. Build + sign via OPWallet (null signers)
+        // 3. Dynamic fee rate
+        const gas = await provider.gasParameters();
+        const feeRate = gas.bitcoin.recommended.medium;
+
+        // 4. Build + sign via OPWallet (null signers — wallet extension intercepts)
         const result = await factory.createBTCTransfer({
             signer: null,
             mldsaSigner: null,
@@ -62,18 +68,21 @@ export async function sendBTC(
             from: userAddress,
             to: toAddress,
             amount: BigInt(amountSats),
-        });
+            feeRate,
+            priorityFee: 0n,
+            gasSatFee: 0n,
+        } as unknown as IFundingTransactionParameters);
 
-        // 4. Broadcast
+        // 5. Broadcast
         const broadcast = await provider.sendRawTransaction(result.tx, false);
-        const txid = broadcast.result || broadcast.toString();
+        const txid = String(broadcast.result ?? broadcast);
 
         return {
             txid,
             fee: result.estimatedFees.toString(),
         };
-    } catch (e: any) {
-        console.log('[topup] error stack:', e.stack);
+    } catch (e: unknown) {
+        console.log('[topup] error stack:', (e as Error).stack);
         throw e;
     } finally {
         await provider.close();

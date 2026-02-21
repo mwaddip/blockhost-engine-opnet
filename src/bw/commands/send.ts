@@ -58,12 +58,16 @@ export async function executeSend(
         const factory = new TransactionFactory();
         const utxos = await provider.utxoManager.getUTXOs({
             address: wallet.p2tr,
-            optimize: true,
+            optimize: false,
         });
 
         if (utxos.length === 0) {
             throw new Error(`No UTXOs available for ${fromRole}`);
         }
+
+        // Dynamic fee rate from network
+        const gas = await provider.gasParameters();
+        const feeRate = gas.bitcoin.recommended.medium;
 
         const result = await factory.createBTCTransfer({
             from: wallet.p2tr,
@@ -73,7 +77,7 @@ export async function executeSend(
             signer: wallet.keypair,
             mldsaSigner: wallet.mldsaKeypair,
             network,
-            feeRate: 15,
+            feeRate,
             priorityFee: 0n,
             gasSatFee: 0n,
         });

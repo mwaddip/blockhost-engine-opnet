@@ -69,7 +69,7 @@ export function loadFundManagerConfig(): FundManagerConfig {
 export function loadRevenueShareConfig(): RevenueShareConfig {
   const disabled: RevenueShareConfig = {
     enabled: false,
-    total_percent: 0,
+    total_bps: 0,
     recipients: [],
   };
 
@@ -79,25 +79,35 @@ export function loadRevenueShareConfig(): RevenueShareConfig {
     }
 
     const data = fs.readFileSync(REVENUE_SHARE_PATH, "utf8");
-    const config = JSON.parse(data) as RevenueShareConfig;
+    const raw = JSON.parse(data) as Record<string, unknown>;
 
-    if (!config.enabled) {
+    if (!raw.enabled) {
       return disabled;
     }
 
-    if (
-      !config.recipients ||
-      !Array.isArray(config.recipients) ||
-      config.recipients.length === 0
-    ) {
+    const recipients = raw.recipients as Array<Record<string, unknown>> | undefined;
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
       return disabled;
     }
 
-    if (!config.total_percent || config.total_percent <= 0) {
+    // Support both new bps format and legacy percent format
+    const totalBps = raw.total_bps as number | undefined
+      ?? (raw.total_percent ? Math.round((raw.total_percent as number) * 100) : 0);
+
+    if (totalBps <= 0) {
       return disabled;
     }
 
-    return config;
+    return {
+      enabled: true,
+      total_bps: totalBps,
+      total_percent: raw.total_percent as number | undefined,
+      recipients: recipients.map(r => ({
+        role: r.role as string,
+        bps: (r.bps as number | undefined) ?? (r.percent ? Math.round((r.percent as number) * 100) : 0),
+        percent: r.percent as number | undefined,
+      })),
+    };
   } catch (err) {
     console.error(`[FUND] Error loading revenue share config: ${err}`);
     return disabled;

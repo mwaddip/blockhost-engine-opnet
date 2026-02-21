@@ -26,12 +26,14 @@ import { networks } from '@btc-vision/bitcoin';
 import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
-    const command = args[0] || '';
+    const command = args[0] ?? '';
     const flags: Record<string, string> = {};
     for (let i = 1; i < args.length; i++) {
-        if (args[i].startsWith('--') && i + 1 < args.length) {
-            const key = args[i].slice(2);
-            flags[key] = args[++i];
+        const arg = args[i];
+        if (arg !== undefined && arg.startsWith('--') && i + 1 < args.length) {
+            const key = arg.slice(2);
+            const val = args[++i];
+            if (val !== undefined) flags[key] = val;
         }
     }
     return { command, flags };
@@ -59,22 +61,22 @@ async function main(): Promise<void> {
     switch (command) {
         case 'encrypt-symmetric': {
             requireFlags(flags, 'signature', 'plaintext');
-            const result = symmetricEncrypt(flags.signature, flags.plaintext);
+            const result = symmetricEncrypt(flags['signature']!, flags['plaintext']!);
             process.stdout.write(result + '\n');
             break;
         }
 
         case 'decrypt-symmetric': {
             requireFlags(flags, 'signature', 'ciphertext');
-            const result = symmetricDecrypt(flags.signature, flags.ciphertext);
+            const result = symmetricDecrypt(flags['signature']!, flags['ciphertext']!);
             process.stdout.write(result + '\n');
             break;
         }
 
         case 'decrypt': {
             requireFlags(flags, 'private-key-file', 'ciphertext');
-            const keyHex = fs.readFileSync(flags['private-key-file'], 'utf8').trim().replace(/^0x/, '');
-            const result = eciesDecrypt(keyHex, flags.ciphertext);
+            const keyHex = fs.readFileSync(flags['private-key-file']!, 'utf8').trim().replace(/^0x/, '');
+            const result = eciesDecrypt(keyHex, flags['ciphertext']!);
             process.stdout.write(result + '\n');
             break;
         }
@@ -91,7 +93,7 @@ async function main(): Promise<void> {
 
         case 'derive-pubkey': {
             requireFlags(flags, 'private-key');
-            const keyHex = flags['private-key'].replace(/^0x/, '');
+            const keyHex = flags['private-key']!.replace(/^0x/, '');
             const pubBytes = secp256k1.getPublicKey(
                 Uint8Array.from(Buffer.from(keyHex, 'hex')),
                 false,
@@ -106,7 +108,7 @@ async function main(): Promise<void> {
             // OPNet: address derivation requires ML-DSA, not just secp256k1.
             // For secp256k1-only callers, return the compressed pubkey as a 0x-prefixed identifier.
             // Full OPNet address derivation needs the mnemonic path (Mnemonic → deriveOPWallet).
-            const keyHex = flags.key.replace(/^0x/, '');
+            const keyHex = flags['key']!.replace(/^0x/, '');
             const pubBytes = secp256k1.getPublicKey(
                 Uint8Array.from(Buffer.from(keyHex, 'hex')),
                 true,

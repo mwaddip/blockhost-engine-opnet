@@ -1286,7 +1286,7 @@
     });
 
     // Admin Command: HMAC-authenticated command sent via OP_RETURN
-    // Format: nonce(3) + " " + command [+ " " + host] + HMAC-SHA256(sharedKey, message)[:8]
+    // Format: nonce(3) + " " + command [+ " " + host] + HMAC-SHA256(sharedKey, message)[:16]
     // The shared key is SHAKE256(admin's Schnorr signature of publicSecret)
     // — same key used for NFT userEncrypted. Admin must sign publicSecret first (View My Servers tab).
 
@@ -1336,18 +1336,18 @@
             var sigBytes = typeof sigResult === 'string' ? hexToBytes(sigResult) : new Uint8Array(sigResult);
             var sharedKey = window.deriveKey(sigBytes);
 
-            // HMAC-SHA256(sharedKey, message), truncated to 8 bytes
+            // HMAC-SHA256(sharedKey, message), truncated to 16 bytes (128-bit)
             showStatus(statusEl, 'Computing HMAC...', 'info');
             var cryptoKey = await crypto.subtle.importKey(
                 'raw', sharedKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
             var messageBytes = new TextEncoder().encode(message);
             var hmacFull = await crypto.subtle.sign('HMAC', cryptoKey, messageBytes);
-            var hmac8 = new Uint8Array(hmacFull).slice(0, 8);
+            var hmac16 = new Uint8Array(hmacFull).slice(0, 16);
 
-            // Final payload: message bytes + 8-byte HMAC
-            var payload = new Uint8Array(messageBytes.length + 8);
+            // Final payload: message bytes + 16-byte HMAC
+            var payload = new Uint8Array(messageBytes.length + 16);
             payload.set(messageBytes, 0);
-            payload.set(hmac8, messageBytes.length);
+            payload.set(hmac16, messageBytes.length);
 
             var payloadHex = Array.from(payload).map(function(b) {
                 return b.toString(16).padStart(2, '0');
