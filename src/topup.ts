@@ -61,9 +61,6 @@ export async function sendBTC(
             utxos,
             from: userAddress,
             to: toAddress,
-            feeRate: 10,
-            priorityFee: 0n,
-            gasSatFee: 0n,
             amount: BigInt(amountSats),
         });
 
