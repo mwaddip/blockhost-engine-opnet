@@ -14,9 +14,6 @@
  *   key-to-address     --key <hex>
  *   keygen             [--network regtest|testnet|mainnet]
  *   validate-mnemonic  [--network regtest|testnet|mainnet]  (reads MNEMONIC env var)
- *   build-funding-psbt --from <addr> --to <addr> --amount <sats> --pubkey <compressed-hex>
- *                      --rpc-url <url> [--fee-rate <n>] [--network regtest|testnet|mainnet]
- *                      Uses FundingTransaction to build an unsigned PSBT for OPWallet signing.
  */
 
 import { eciesDecrypt, symmetricEncrypt, symmetricDecrypt } from './crypto.js';
@@ -25,8 +22,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Mnemonic, AddressTypes, MLDSASecurityLevel } from '@btc-vision/transaction';
-import { networks, type Psbt } from '@btc-vision/bitcoin';
-import type { Signer } from '@btc-vision/ecpair';
+import { networks } from '@btc-vision/bitcoin';
 import { generateMnemonic, validateMnemonic } from 'bip39';
 
 function parseArgs(args: string[]): { command: string; flags: Record<string, string> } {
@@ -139,86 +135,13 @@ async function main(): Promise<void> {
             break;
         }
 
-        case 'build-funding-psbt': {
-            requireFlags(flags, 'from', 'to', 'amount', 'pubkey', 'rpc-url');
-            const net = resolveNetwork(flags.network || 'regtest');
-            const from = flags.from!;
-            const to = flags.to!;
-            const amount = BigInt(flags.amount!);
-            const feeRate = parseFloat(flags['fee-rate'] || '10');
-            const rpcUrl = flags['rpc-url']!;
-            const pubkeyHex = flags.pubkey!.replace(/^0x/, '');
-
-            // Fetch UTXOs via opnet provider
-            const { JSONRpcProvider } = await import('opnet');
-            const provider = new JSONRpcProvider(rpcUrl, net);
-
-            const utxos = await provider.utxoManager.getUTXOsForAmount({
-                address: from,
-                amount: amount + 10000n,
-                mergePendingUTXOs: true,
-                filterSpentUTXOs: true,
-                throwErrors: true,
-            });
-
-            // Dummy signer: only publicKey is used (for tapInternalKey derivation).
-            // No signing happens server-side — OPWallet signs via signPsbt().
-            const pubkeyBuf = Uint8Array.from(Buffer.from(pubkeyHex, 'hex'));
-            const dummySigner = {
-                publicKey: pubkeyBuf,
-                sign: () => { throw new Error('server-side signing not available'); },
-                signSchnorr: () => { throw new Error('server-side signing not available'); },
-            } as unknown as Signer;
-
-            // Build unsigned PSBT via FundingTransaction
-            const { FundingTransaction } = await import('@btc-vision/transaction');
-
-            // Subclass to expose the protected transaction (Psbt) property
-            class UnsignedFundingTx extends FundingTransaction {
-                public getUnsignedPsbt(): Psbt { return this.transaction; }
-            }
-
-            const fundingTx = new UnsignedFundingTx({
-                utxos,
-                amount,
-                to,
-                from,
-                signer: dummySigner,
-                mldsaSigner: null,
-                network: net,
-                feeRate,
-                priorityFee: 0n,
-                gasSatFee: 0n,
-                noSignatures: true,
-            });
-
-            // Populates the Psbt with inputs + outputs without signing or finalizing
-            await fundingTx.generateTransactionMinimalSignatures();
-
-            const psbt = fundingTx.getUnsignedPsbt();
-            const toSignInputs = utxos.map((_: unknown, i: number) => ({
-                index: i,
-                address: from,
-                disableTweakSigner: false,
-            }));
-
-            process.stdout.write(JSON.stringify({
-                psbt: psbt.toHex(),
-                toSignInputs,
-                fee: fundingTx.estimatedFees.toString(),
-            }) + '\n');
-
-            await provider.close();
-            break;
-        }
-
         default:
             die(
                 `unknown command: ${command || '(none)'}\n` +
                 'Usage: nft_tool <command> [--flags]\n' +
                 'Commands: encrypt-symmetric, decrypt-symmetric, decrypt,\n' +
                 '          generate-keypair, derive-pubkey, key-to-address,\n' +
-                '          keygen, validate-mnemonic, build-funding-psbt',
+                '          keygen, validate-mnemonic',
             );
     }
 }
