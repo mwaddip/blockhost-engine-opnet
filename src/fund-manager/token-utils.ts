@@ -47,6 +47,9 @@ export async function getTokenBalance(
     if ('error' in balanceResult) {
         throw new Error(`balanceOf failed: ${balanceResult.error}`);
     }
+    if ('error' in metadataResult) {
+        throw new Error(`metadata failed: ${metadataResult.error}`);
+    }
 
     return {
         balance: balanceResult.properties.balance,

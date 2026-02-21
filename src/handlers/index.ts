@@ -244,6 +244,12 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
   const vmName = formatVmName(event.subscriptionId);
   const expiryDays = calculateExpiryDays(event.expiresAt);
 
+  // Validate subscriber address format before using in spawn args
+  if (!/^0x[0-9a-fA-F]{64}$/.test(event.subscriber)) {
+    console.error(`[ERROR] Invalid subscriber address format: ${event.subscriber}`);
+    return;
+  }
+
   console.log("\n========== SUBSCRIPTION CREATED ==========");
   console.log(`Transaction: ${txHash}`);
   console.log(`Subscription ID: ${event.subscriptionId}`);

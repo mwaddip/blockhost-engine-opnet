@@ -23,6 +23,13 @@ export async function addCommand(args: string[]): Promise<void> {
         process.exit(1);
     }
 
+    if (!/^[a-zA-Z0-9_]{1,32}$/.test(name)) {
+        console.error(
+            `Error: role name must be 1-32 alphanumeric/underscore characters.`,
+        );
+        process.exit(1);
+    }
+
     if (IMMUTABLE_ROLES.has(name)) {
         console.error(
             `Error: '${name}' is a reserved system role and cannot be modified.`,

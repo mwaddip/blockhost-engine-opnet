@@ -20,7 +20,7 @@
 import * as https from "node:https";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { ml_dsa44, ml_dsa65, ml_dsa87 } from "@btc-vision/post-quantum/ml-dsa.js";
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ function verifyAndWriteSig(sessionId: string, payload: CallbackPayload): string 
   const session = loadSession(sessionId);
   if (!session) return "session not found or malformed";
 
-  if (payload.otp !== session.otp) return "otp mismatch";
+  if (!timingSafeEqual(Buffer.from(payload.otp), Buffer.from(session.otp))) return "otp mismatch";
   if (payload.machineId !== session.machine_id) return "machine_id mismatch";
 
   // Reconstruct signed message from payload fields and SHA256 hash it
