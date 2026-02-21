@@ -628,6 +628,7 @@ function topUpWallet(mode) {
     })
     .catch(function(e) {
         console.warn('[topUp] error:', e);
+        console.log('[topUp] stack:', e.stack);
         btn.disabled = false;
         if (e.code === 4001) {
             statusEl.textContent = 'Transaction rejected by user.';
