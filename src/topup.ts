@@ -72,6 +72,9 @@ export async function sendBTC(
             txid,
             fee: result.estimatedFees.toString(),
         };
+    } catch (e: any) {
+        console.log('[topup] error stack:', e.stack);
+        throw e;
     } finally {
         await provider.close();
     }
