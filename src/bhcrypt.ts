@@ -1,9 +1,8 @@
 #!/usr/bin/env -S npx tsx
 /**
- * nft_tool — crypto CLI for blockhost-engine-opnet.
+ * bhcrypt — crypto CLI for blockhost-engine-opnet.
  *
- * Drop-in replacement for the EVM nft_tool (formerly pam_web3_tool).
- * Same subcommand interface, backed by src/crypto.ts (native @noble/* crypto).
+ * Subcommand interface backed by src/crypto.ts (native @noble/* crypto).
  *
  * Subcommands:
  *   encrypt-symmetric  --signature <hex> --plaintext <text>
@@ -40,7 +39,7 @@ function parseArgs(args: string[]): { command: string; flags: Record<string, str
 }
 
 function die(msg: string): never {
-    process.stderr.write(`nft_tool: ${msg}\n`);
+    process.stderr.write(`bhcrypt: ${msg}\n`);
     process.exit(1);
 }
 
@@ -86,8 +85,8 @@ async function main(): Promise<void> {
             const privHex = bytesToHex(privBytes);
             const pubBytes = secp256k1.getPublicKey(privBytes, false);
             const pubHex = bytesToHex(pubBytes);
-            process.stdout.write(`Private key (hex): ${privHex}\n`);
-            process.stdout.write(`Public key (hex): ${pubHex}\n`);
+            process.stdout.write(`${privHex}\n`);
+            process.stdout.write(`${pubHex}\n`);
             break;
         }
 
@@ -99,7 +98,7 @@ async function main(): Promise<void> {
                 false,
             );
             const pubHex = bytesToHex(pubBytes);
-            process.stdout.write(`Public key (hex): ${pubHex}\n`);
+            process.stdout.write(`${pubHex}\n`);
             break;
         }
 
@@ -140,7 +139,7 @@ async function main(): Promise<void> {
         default:
             die(
                 `unknown command: ${command || '(none)'}\n` +
-                'Usage: nft_tool <command> [--flags]\n' +
+                'Usage: bhcrypt <command> [--flags]\n' +
                 'Commands: encrypt-symmetric, decrypt-symmetric, decrypt,\n' +
                 '          generate-keypair, derive-pubkey, key-to-address,\n' +
                 '          keygen, validate-mnemonic',

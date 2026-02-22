@@ -80,8 +80,7 @@ components:
     path: src/reconcile/
     description: |
       Periodic NFT reconciliation to fix state drift from partial failures.
-      Compares on-chain totalSupply() with local reserved_nft_tokens map
-      and marks tokens as minted if they exist on-chain but not locally.
+      For unminted VMs, queries ownerOf on-chain and marks as minted if found.
       Detects NFT ownership transfers and updates VM GECOS fields.
 
   signup_page:
@@ -178,7 +177,7 @@ deployment:
       - /etc/blockhost/admin-commands.json (admin command definitions)
       - /etc/blockhost/addressbook.json (role-to-wallet mapping)
       - /etc/blockhost/revenue-share.json (revenue sharing config)
-      - /var/lib/blockhost/vms.json (VM database with reserved_nft_tokens)
+      - /var/lib/blockhost/vms.json (VM database with NFT state)
 
   vm:
     template: debian-12-web3-template (VMID 9001)

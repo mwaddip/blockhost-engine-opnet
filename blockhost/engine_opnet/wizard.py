@@ -158,7 +158,7 @@ def wizard_opnet():
 def api_generate_wallet():
     """Generate a new OPNet wallet (mnemonic-based).
 
-    Uses nft_tool keygen CLI (bundled with engine package).
+    Uses bhcrypt keygen CLI (bundled with engine package).
     Returns mnemonic phrase and P2TR address.
     """
     blockchain = session.get("blockchain", {})
@@ -166,7 +166,7 @@ def api_generate_wallet():
 
     try:
         result = subprocess.run(
-            ["nft_tool", "keygen", "--network", network],
+            ["bhcrypt", "keygen", "--network", network],
             capture_output=True,
             text=True,
             timeout=30,
@@ -183,7 +183,7 @@ def api_generate_wallet():
     except json.JSONDecodeError:
         return jsonify({"error": "Could not parse wallet output"}), 500
     except FileNotFoundError:
-        return jsonify({"error": "nft_tool not found — is blockhost-engine installed?"}), 500
+        return jsonify({"error": "bhcrypt not found — is blockhost-engine installed?"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Wallet generation timed out"}), 500
 
@@ -210,7 +210,7 @@ def api_validate_mnemonic():
 
     try:
         result = subprocess.run(
-            ["nft_tool", "validate-mnemonic", "--network", network],
+            ["bhcrypt", "validate-mnemonic", "--network", network],
             capture_output=True,
             text=True,
             timeout=30,
@@ -223,7 +223,7 @@ def api_validate_mnemonic():
         else:
             return jsonify({"error": result.stderr.strip() or "Invalid mnemonic"}), 400
     except FileNotFoundError:
-        return jsonify({"error": "nft_tool not found — is blockhost-engine installed?"}), 500
+        return jsonify({"error": "bhcrypt not found — is blockhost-engine installed?"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Validation timed out"}), 500
 
@@ -566,7 +566,7 @@ def validate_signature(sig: str) -> bool:
 
 
 def decrypt_config(signature: str, ciphertext: str) -> dict:
-    """Decrypt config backup using nft_tool.
+    """Decrypt config backup using bhcrypt.
 
     Args:
         signature: Admin wallet signature (0x-prefixed hex)
@@ -577,7 +577,7 @@ def decrypt_config(signature: str, ciphertext: str) -> dict:
 
     Raises:
         ValueError: On decryption failure or invalid content
-        FileNotFoundError: If nft_tool not installed
+        FileNotFoundError: If bhcrypt not installed
     """
     import yaml
 
@@ -586,7 +586,7 @@ def decrypt_config(signature: str, ciphertext: str) -> dict:
 
     result = subprocess.run(
         [
-            "nft_tool", "decrypt-symmetric",
+            "bhcrypt", "decrypt-symmetric",
             "--signature", signature,
             "--ciphertext", ciphertext,
         ],
@@ -604,7 +604,7 @@ def decrypt_config(signature: str, ciphertext: str) -> dict:
 
 
 def encrypt_config(signature: str, plaintext: str) -> str:
-    """Encrypt config for backup download using nft_tool.
+    """Encrypt config for backup download using bhcrypt.
 
     Args:
         signature: Admin wallet signature (0x-prefixed hex)
@@ -615,11 +615,11 @@ def encrypt_config(signature: str, plaintext: str) -> str:
 
     Raises:
         ValueError: On encryption failure
-        FileNotFoundError: If nft_tool not installed
+        FileNotFoundError: If bhcrypt not installed
     """
     result = subprocess.run(
         [
-            "nft_tool", "encrypt-symmetric",
+            "bhcrypt", "encrypt-symmetric",
             "--signature", signature,
             "--plaintext", plaintext,
         ],
@@ -1084,7 +1084,6 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
                         "next_vmid": provisioner.get("vmid_start", 100),
                         "allocated_ips": [],
                         "allocated_ipv6": [],
-                        "reserved_nft_tokens": {},
                     },
                     indent=2,
                 )
@@ -1130,7 +1129,7 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
         server_addr = https_cfg.get("ipv6_address") or https_cfg.get("hostname", "")
 
         if server_addr and admin_signature:
-            # Encrypt connection details using nft_tool CLI
+            # Encrypt connection details using bhcrypt CLI
             connection_details = json.dumps({
                 "hostname": server_addr,
                 "port": 22,
@@ -1139,7 +1138,7 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
             try:
                 result = subprocess.run(
                     [
-                        "nft_tool", "encrypt-symmetric",
+                        "bhcrypt", "encrypt-symmetric",
                         "--signature", admin_signature,
                         "--plaintext", connection_details,
                     ],

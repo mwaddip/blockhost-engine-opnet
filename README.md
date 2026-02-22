@@ -49,7 +49,7 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 22+
 - Python 3.10+
 - OPNet contract deployment tools (`@btc-vision/transaction`)
 - `blockhost-common` package (shared configuration)
@@ -157,7 +157,7 @@ The reconciler runs every 5 minutes as part of the monitor polling loop. It ensu
 
 ### NFT Minting Reconciliation
 
-Detects and fixes cases where NFTs were minted on-chain but the local database wasn't updated (e.g., due to a crash during provisioning).
+For each active/suspended VM where `nft_minted !== true`, queries on-chain `ownerOf(tokenId)`. If the token exists, marks it as minted locally and updates GECOS if needed. If not, logs a warning for operator attention.
 
 ### NFT Ownership Transfer Detection
 
@@ -178,7 +178,7 @@ This is the sole mechanism for propagating NFT ownership changes to VMs. The PAM
 | `admin-commands.json` | `/etc/blockhost/` | Admin command definitions (port knocking, etc.) |
 | `addressbook.json` | `/etc/blockhost/` | Role-to-wallet mapping (admin, server, hot, dev, broker) |
 | `revenue-share.json` | `/etc/blockhost/` | Revenue sharing configuration (dev/broker splits) |
-| `vms.json` | `/var/lib/blockhost/` | VM database (IPs, VMIDs, reserved NFT tokens) |
+| `vms.json` | `/var/lib/blockhost/` | VM database (IPs, VMIDs, NFT state) |
 | `engine.json` | `/usr/share/blockhost/` | Engine manifest (identity, wizard plugin, constraints) |
 
 ## Fund Manager
@@ -304,7 +304,7 @@ All patterns are anchored regexes. If `constraints` is absent, consumers skip fo
 
 ## Auth Service (web3-auth-svc)
 
-The engine ships an HTTPS signing server as an esbuild-bundled JS file with a node wrapper for VMs. Requires Node.js >= 18 on the VM.
+The engine ships an HTTPS signing server as an esbuild-bundled JS file with a node wrapper for VMs. Requires Node.js >= 22 on the VM.
 
 ### How It Works
 
@@ -394,12 +394,12 @@ blockhost-engine-opnet/
 ├── engine.json                     # Engine manifest (identity, wizard plugin, constraints)
 ├── src/                            # TypeScript source
 │   ├── monitor/                    # OPNet blockchain event monitor
-│   ├── handlers/                   # Event handlers (NFT reservation, VM provisioning, minting)
+│   ├── handlers/                   # Event handlers (VM provisioning, NFT minting, update-gecos)
 │   ├── admin/                      # On-chain admin commands (HMAC OP_RETURN)
 │   ├── reconcile/                  # NFT state reconciliation + GECOS sync
 │   ├── fund-manager/               # Automated fund withdrawal & distribution
-│   ├── crypto.ts                   # Native ECIES + SHAKE256 (replaces pam_web3_tool)
-│   ├── nft-tool.ts                 # nft_tool CLI (wraps crypto.ts)
+│   ├── crypto.ts                   # Native ECIES + SHAKE256
+│   ├── bhcrypt.ts                  # bhcrypt CLI (wraps crypto.ts)
 │   ├── bw/                         # blockwallet CLI (send, balance, withdraw, swap, split, who, config, plan, set)
 │   ├── ab/                         # addressbook CLI (add, del, up, new, list, --init)
 │   ├── is/                         # identity predicate CLI (NFT ownership, contract)

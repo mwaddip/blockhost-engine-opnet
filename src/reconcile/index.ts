@@ -7,7 +7,7 @@
 
 import { getContract, type JSONRpcProvider } from "opnet";
 import type { Network } from "@btc-vision/bitcoin";
-import { execFileSync, spawnSync } from "child_process";
+import { spawnSync } from "child_process";
 import * as fs from "fs";
 import { getCommand } from "../provisioner";
 import { loadWeb3Config } from "../fund-manager/web3-config";
@@ -31,7 +31,6 @@ interface VmEntry {
 interface VmsDatabase {
   vms: Record<string, VmEntry>;
   allocated_ips: string[];
-  reserved_nft_tokens?: Record<string, { vm_name: string; minted: boolean }>;
 }
 
 let lastReconcileTime = 0;
@@ -40,7 +39,7 @@ let reconcileInProgress = false;
 /**
  * Check if the provisioner's create command is currently running
  */
-function isProvisioningInProgress(): boolean {
+export function isProvisioningInProgress(): boolean {
   try {
     const result = spawnSync("pgrep", ["-f", getCommand("create")], {
       encoding: "utf8",
@@ -118,15 +117,19 @@ print(f"Marked token {token_id} as minted for {vm_name}")
 `;
 
   try {
-    const result = execFileSync("python3", ["-c", script], {
+    const result = spawnSync("python3", ["-c", script], {
       encoding: "utf8",
       timeout: 10000,
       cwd: "/var/lib/blockhost",
       env: { ...process.env, TOKEN_ID: String(tokenId), VM_NAME: vmName },
     });
-    console.log(`[RECONCILE] ${result.trim()}`);
-    return true;
-  } catch (err) {
+    if (result.status === 0) {
+      console.log(`[RECONCILE] ${(result.stdout || "").trim()}`);
+      return true;
+    }
+    console.warn(`[RECONCILE] Python update failed, will use direct JSON update`);
+    return false;
+  } catch {
     // Python module might not be available, fall back to direct JSON update
     console.warn(`[RECONCILE] Python update failed, will use direct JSON update`);
     return false;
@@ -250,44 +253,15 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
       network,
     );
 
-    // Get on-chain total supply
-    let onChainSupply: bigint;
-    try {
-      const supplyResult = await nftContract.totalSupply();
-      if ('error' in supplyResult) {
-        console.warn(`[RECONCILE] Could not query totalSupply`);
-        return;
-      }
-      onChainSupply = supplyResult.properties.totalSupply;
-    } catch (err) {
-      console.warn(`[RECONCILE] Could not query totalSupply: ${err}`);
-      return;
-    }
-
-    const onChainCount = Number(onChainSupply);
-
-    // Derive local expected next ID from reserved_nft_tokens keys
-    let localNextId = 0;
-    if (localDb.reserved_nft_tokens) {
-      const reservedIds = Object.keys(localDb.reserved_nft_tokens).map(k => parseInt(k, 10));
-      if (reservedIds.length > 0) {
-        localNextId = Math.max(...reservedIds) + 1;
-      }
-    }
-
-    // If on-chain has more tokens than local expects, we need to reconcile
-    if (onChainCount > localNextId) {
-      console.log(`[RECONCILE] Discrepancy detected: on-chain has ${onChainCount} tokens, local max reserved=${localNextId - 1}`);
-
-      for (let tokenId = localNextId; tokenId < onChainCount; tokenId++) {
-        await reconcileToken(nftContract, localDb, tokenId);
-      }
-    }
-
-    // Also check VMs that have reserved tokens but not marked as minted
+    // Check VMs that are not marked as minted
     for (const [vmName, vm] of Object.entries(localDb.vms)) {
-      if (vm.nft_token_id !== undefined && vm.nft_minted !== true) {
-        try {
+      if (vm.status === "destroyed") continue;
+      if (vm.nft_minted === true) continue;
+
+      // Try to find an NFT owned by this VM's wallet
+      try {
+        // If we have a token ID, check that specific token
+        if (vm.nft_token_id !== undefined) {
           const result = await nftContract.ownerOf(BigInt(vm.nft_token_id));
           if ('error' in result) continue;
           // Token exists on-chain, mark as minted locally
@@ -297,30 +271,22 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
             vm.nft_minted = true;
             saveVmsDatabase(localDb);
           }
-          console.log(`[RECONCILE] Reconciled NFT token #${vm.nft_token_id}: marked as minted for ${vmName}`);
-        } catch {
-          // Token doesn't exist on-chain, that's expected for reserved-but-not-minted
-        }
-      }
-    }
 
-    // Check reserved_nft_tokens map if it exists
-    if (localDb.reserved_nft_tokens) {
-      for (const [tokenIdStr, tokenInfo] of Object.entries(localDb.reserved_nft_tokens)) {
-        const tokenId = parseInt(tokenIdStr, 10);
-        if (!tokenInfo.minted && tokenId < onChainCount) {
-          try {
-            const result = await nftContract.ownerOf(BigInt(tokenId));
-            if ('error' in result) continue;
-            // Token exists, mark as minted
-            console.log(`[RECONCILE] Token #${tokenId} in nft_tokens exists on-chain but not marked minted`);
-            tokenInfo.minted = true;
-            saveVmsDatabase(localDb);
-            console.log(`[RECONCILE] Reconciled NFT token #${tokenId}: marked as minted for ${tokenInfo.vm_name}`);
-          } catch {
-            // Token doesn't exist
+          // Update GECOS if needed
+          if (vm.gecos_synced !== true) {
+            if (updateGecos(vm.vm_name, vm.owner_wallet, vm.nft_token_id)) {
+              vm.gecos_synced = true;
+              saveVmsDatabase(localDb);
+            }
           }
+
+          console.log(`[RECONCILE] Reconciled NFT token #${vm.nft_token_id} for ${vmName}`);
+        } else {
+          // No token ID — VM was created but NFT was never minted
+          console.warn(`[RECONCILE] ${vmName} has no NFT token ID and is not marked minted — NFT may not have been minted`);
         }
+      } catch {
+        // Token doesn't exist on-chain or query failed — skip
       }
     }
 
@@ -331,51 +297,6 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
     console.error(`[RECONCILE] Error during reconciliation: ${err}`);
   } finally {
     reconcileInProgress = false;
-  }
-}
-
-/**
- * Reconcile a specific token that exists on-chain but may be missing locally
- */
-async function reconcileToken(
-  nftContract: IAccessCredentialNFT,
-  localDb: VmsDatabase,
-  tokenId: number
-): Promise<void> {
-  try {
-    const result = await nftContract.ownerOf(BigInt(tokenId));
-    if ('error' in result) return;
-
-    const owner = result.properties.owner.toString().toLowerCase();
-
-    // Try to find which VM this token belongs to
-    let foundVm: string | null = null;
-
-    for (const [vmName, vm] of Object.entries(localDb.vms)) {
-      if (vm.owner_wallet?.toLowerCase() === owner) {
-        if (vm.nft_token_id === undefined || vm.nft_token_id === tokenId) {
-          foundVm = vmName;
-          break;
-        }
-      }
-    }
-
-    if (foundVm) {
-      const vm = localDb.vms[foundVm]!;
-      if (vm.nft_token_id === undefined) {
-        console.log(`[RECONCILE] Token #${tokenId} found on-chain for ${foundVm}, assigning locally`);
-        vm.nft_token_id = tokenId;
-      }
-      if (!vm.nft_minted) {
-        console.log(`[RECONCILE] Marking token #${tokenId} as minted for ${foundVm}`);
-        vm.nft_minted = true;
-      }
-      saveVmsDatabase(localDb);
-    } else {
-      console.warn(`[RECONCILE] Token #${tokenId} exists on-chain (owner: ${owner}) but no matching VM found locally`);
-    }
-  } catch (err) {
-    console.error(`[RECONCILE] Error reconciling token ${tokenId}: ${err}`);
   }
 }
 

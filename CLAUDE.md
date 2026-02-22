@@ -76,15 +76,16 @@ blockhost-engine-opnet/
 │   └── templates/engine_opnet/  # blockchain.html, summary_section.html
 ├── engine.json           # Engine manifest (discovered by installer at /usr/share/blockhost/)
 ├── scripts/             # Deployment, minting, and utility scripts
-│   ├── mint_nft.py      # NFT minting (installed as blockhost-mint-nft)
-│   ├── deploy-contracts.sh  # Production contract deployer (installed as blockhost-deploy-contracts)
+│   ├── mint_nft         # NFT minting (installed as blockhost-mint-nft)
+│   ├── deploy-contracts # Production contract deployer (installed as blockhost-deploy-contracts)
 ├── src/                 # TypeScript server source
 │   ├── monitor/         # Contract event polling & OPNet block scanning
-│   ├── handlers/        # Event handlers (NFT reservation, provisioner dispatch, NFT minting)
+│   ├── handlers/        # Event handlers (VM provisioning, NFT minting, update-gecos)
 │   ├── admin/           # On-chain admin commands (HMAC OP_RETURN, anti-replay)
 │   ├── reconcile/       # Periodic NFT state reconciliation
 │   ├── fund-manager/    # Automated fund withdrawal, distribution & gas management
-│   ├── crypto.ts        # Native ECIES decrypt + SHAKE256 symmetric encrypt (replaces pam_web3_tool)
+│   ├── crypto.ts        # Native ECIES decrypt + SHAKE256 symmetric encrypt
+│   ├── bhcrypt.ts       # bhcrypt CLI (wraps crypto.ts)
 │   ├── bw/              # blockwallet CLI (send, balance, withdraw, swap, split, who, config, plan, set)
 │   ├── ab/              # addressbook CLI (add, del, up, new, list, --init)
 │   ├── is/              # identity predicate CLI (NFT ownership, signature, contract checks)
@@ -139,7 +140,7 @@ The engine uses the `opnet` package (NOT ethers.js) for all blockchain interacti
 
 ### Crypto Module (`src/crypto.ts`)
 
-Native crypto replacing `pam_web3_tool` CLI:
+Native crypto (used by bhcrypt CLI):
 - `eciesDecrypt()` — secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM. Wire: `ephemeralPub(65) + IV(12) + ciphertext+tag`
 - `symmetricEncrypt()` — SHAKE256 key derivation + AES-256-GCM. Wire: `IV(12) + ciphertext+tag`
 - `loadServerPrivateKey()` — reads `/etc/blockhost/server.key`
@@ -151,7 +152,7 @@ Runs every 5 minutes as part of the monitor polling loop. Performs two categorie
 
 ### NFT Minting Reconciliation
 
-Detects discrepancies between on-chain NFT state and local `vms.json`. Fixes partial failures where a VM was created but the NFT mint wasn't recorded locally.
+For each active/suspended VM where `nft_minted !== true`, queries on-chain `ownerOf(tokenId)`. If the token exists, marks it as minted locally and updates GECOS if needed. If not, logs a warning for operator attention.
 
 ### NFT Ownership Transfer Detection
 

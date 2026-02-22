@@ -1,8 +1,8 @@
 /**
  * Native ECIES decrypt + SHAKE256 symmetric encrypt/decrypt.
  *
- * Replaces the pam_web3_tool CLI dependency with @noble/curves + @noble/hashes
- * (transitive deps already present via @btc-vision/bitcoin) and Node.js crypto.
+ * Uses @noble/curves + @noble/hashes (transitive deps via @btc-vision/bitcoin)
+ * and Node.js crypto.
  *
  * Wire formats match the signup-template.html browser implementation exactly.
  */

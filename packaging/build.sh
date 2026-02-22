@@ -12,11 +12,6 @@ TEMPLATE_PKG_DIR="$SCRIPT_DIR/$TEMPLATE_PKG_NAME"
 
 echo "Building blockhost-engine-opnet v${VERSION}..."
 
-# Node.js 18 polyfill: undici (bundled via opnet) uses APIs added in Node 20
-# (File, String.prototype.isWellFormed/toWellFormed). Injected into bundles
-# that import opnet. See polyfill-node18.js for details.
-NODE18_POLYFILL="$SCRIPT_DIR/polyfill-node18.js"
-
 # Clean up build artifacts on exit (success or failure)
 cleanup() {
   rm -rf "$PKG_DIR"
@@ -42,9 +37,8 @@ echo "Bundling TypeScript with esbuild..."
 npx esbuild "$PROJECT_DIR/src/monitor/index.ts" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
-    --inject:"$NODE18_POLYFILL" \
     --outfile="$PKG_DIR/usr/share/blockhost/monitor.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/monitor.js" ]; then
@@ -60,9 +54,8 @@ echo "Bundling bw CLI with esbuild..."
 npx esbuild "$PROJECT_DIR/src/bw/index.ts" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
-    --inject:"$NODE18_POLYFILL" \
     --outfile="$PKG_DIR/usr/share/blockhost/bw.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/bw.js" ]; then
@@ -86,7 +79,7 @@ echo "Bundling ab CLI with esbuild..."
 npx esbuild "$PROJECT_DIR/src/ab/index.ts" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
     --outfile="$PKG_DIR/usr/share/blockhost/ab.js"
 
@@ -111,9 +104,8 @@ echo "Bundling is CLI with esbuild..."
 npx esbuild "$PROJECT_DIR/src/is/index.ts" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
-    --inject:"$NODE18_POLYFILL" \
     --outfile="$PKG_DIR/usr/share/blockhost/is.js"
 
 if [ ! -f "$PKG_DIR/usr/share/blockhost/is.js" ]; then
@@ -132,31 +124,29 @@ exec /usr/bin/node /usr/share/blockhost/is.js "$@"
 ISEOF
 chmod 755 "$PKG_DIR/usr/bin/is"
 
-# Bundle nft_tool CLI
-echo "Bundling nft_tool CLI with esbuild..."
-npx esbuild "$PROJECT_DIR/src/nft-tool.ts" \
+# Bundle bhcrypt CLI
+echo "Bundling bhcrypt CLI with esbuild..."
+npx esbuild "$PROJECT_DIR/src/bhcrypt.ts" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
-    --inject:"$NODE18_POLYFILL" \
-    --outfile="$PKG_DIR/usr/share/blockhost/nft_tool.js"
+    --outfile="$PKG_DIR/usr/share/blockhost/bhcrypt.js"
 
-if [ ! -f "$PKG_DIR/usr/share/blockhost/nft_tool.js" ]; then
-    echo "ERROR: Failed to create nft_tool CLI bundle"
+if [ ! -f "$PKG_DIR/usr/share/blockhost/bhcrypt.js" ]; then
+    echo "ERROR: Failed to create bhcrypt CLI bundle"
     exit 1
 fi
 
-NFT_TOOL_SIZE=$(du -h "$PKG_DIR/usr/share/blockhost/nft_tool.js" | cut -f1)
-echo "nft_tool CLI bundle created: $NFT_TOOL_SIZE"
+BHCRYPT_SIZE=$(du -h "$PKG_DIR/usr/share/blockhost/bhcrypt.js" | cut -f1)
+echo "bhcrypt CLI bundle created: $BHCRYPT_SIZE"
 
-# Create nft_tool wrapper script
-cat > "$PKG_DIR/usr/bin/nft_tool" << 'NFTEOF'
+# Create bhcrypt wrapper script
+cat > "$PKG_DIR/usr/bin/bhcrypt" << 'BHEOF'
 #!/bin/sh
-export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ $NODE_OPTIONS}"
-exec /usr/bin/node /usr/share/blockhost/nft_tool.js "$@"
-NFTEOF
-chmod 755 "$PKG_DIR/usr/bin/nft_tool"
+exec node /usr/share/blockhost/bhcrypt.js "$@"
+BHEOF
+chmod 755 "$PKG_DIR/usr/bin/bhcrypt"
 
 # ============================================
 # Bundle auth-svc with esbuild
@@ -166,7 +156,7 @@ echo "Bundling auth-svc with esbuild..."
 npx esbuild "$PROJECT_DIR/src/auth-svc/index.ts" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
     --outfile="$SCRIPT_DIR/auth-svc.js"
 
@@ -211,7 +201,8 @@ Version: ${VERSION}
 Section: admin
 Priority: optional
 Architecture: all
-Depends: blockhost-common (>= 0.1.0), nodejs (>= 18), python3 (>= 3.10)
+Depends: blockhost-common (>= 0.1.0), nodejs (>= 22), python3 (>= 3.10)
+Provides: bhcrypt
 Recommends: blockhost-provisioner-proxmox (>= 0.1.0) | blockhost-provisioner-libvirt (>= 0.1.0)
 Maintainer: Blockhost <admin@blockhost.io>
 Description: OPNet (Bitcoin L1) engine for Blockhost VM hosting
@@ -219,7 +210,7 @@ Description: OPNet (Bitcoin L1) engine for Blockhost VM hosting
  - WASM contract artifacts (BlockhostSubscriptions + AccessCredentialNFT)
  - Blockchain event monitor service (bundled JS, runs on Node.js)
  - Event handlers for VM provisioning and NFT minting
- - CLI tools: bw (wallet), ab (addressbook), is (identity), nft_tool (crypto)
+ - CLI tools: bw (wallet), ab (addressbook), is (identity), bhcrypt (crypto)
  - Installer wizard plugin for blockchain configuration
  .
  The monitor is a single bundled JavaScript file that runs on Node.js.
@@ -299,9 +290,8 @@ echo "Bundling mint_nft CLI with esbuild..."
 npx esbuild "$PROJECT_DIR/scripts/mint_nft" \
     --bundle \
     --platform=node \
-    --target=node18 \
+    --target=node22 \
     --minify \
-    --inject:"$NODE18_POLYFILL" \
     --loader:=ts \
     --outfile="$PKG_DIR/usr/share/blockhost/mint_nft.js"
 
@@ -355,12 +345,12 @@ echo "  /usr/share/blockhost/monitor.js    - Bundled monitor ($MONITOR_SIZE)"
 echo "  /usr/share/blockhost/bw.js         - Bundled bw CLI ($BW_SIZE)"
 echo "  /usr/share/blockhost/ab.js         - Bundled ab CLI ($AB_SIZE)"
 echo "  /usr/share/blockhost/is.js         - Bundled is CLI ($IS_SIZE)"
-echo "  /usr/share/blockhost/nft_tool.js   - Bundled nft_tool CLI ($NFT_TOOL_SIZE)"
+echo "  /usr/share/blockhost/bhcrypt.js    - Bundled bhcrypt CLI ($BHCRYPT_SIZE)"
 echo "  /usr/share/blockhost/mint_nft.js   - Bundled mint_nft CLI"
 echo "  /usr/bin/bw                        - Blockwallet CLI wrapper"
 echo "  /usr/bin/ab                        - Addressbook CLI wrapper"
 echo "  /usr/bin/is                        - Identity predicate CLI wrapper"
-echo "  /usr/bin/nft_tool                  - Crypto tool CLI wrapper"
+echo "  /usr/bin/bhcrypt                   - Crypto tool CLI wrapper"
 echo "  /usr/bin/blockhost-deploy-contracts - Contract deployer script"
 echo "  /usr/bin/blockhost-mint-nft        - NFT minting CLI wrapper"
 echo "  /usr/bin/blockhost-generate-signup  - Signup page generator"
@@ -401,7 +391,7 @@ mkdir -p "$TEMPLATE_PKG_DIR"/{DEBIAN,usr/bin,usr/share/blockhost/signing-page,li
 # Copy bundled JS
 cp "$SCRIPT_DIR/auth-svc.js" "$TEMPLATE_PKG_DIR/usr/share/blockhost/auth-svc.js"
 
-# Create wrapper script (same pattern as bw, ab, is, nft_tool)
+# Create wrapper script (same pattern as bw, ab, is, bhcrypt)
 cat > "$TEMPLATE_PKG_DIR/usr/bin/web3-auth-svc" << 'AUTHEOF'
 #!/bin/sh
 exec /usr/bin/node /usr/share/blockhost/auth-svc.js "$@"
@@ -439,7 +429,7 @@ Version: ${VERSION}
 Section: admin
 Priority: optional
 Architecture: all
-Depends: nodejs (>= 18)
+Depends: nodejs (>= 22)
 Maintainer: Blockhost <admin@blockhost.io>
 Description: Web3 authentication signing server for Blockhost VMs
  HTTPS server that serves the web3 signing page and handles

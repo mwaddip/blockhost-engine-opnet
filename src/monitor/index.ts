@@ -28,6 +28,7 @@ import {
   runReconciliation,
   shouldRunReconciliation,
   getReconcileInterval,
+  isProvisioningInProgress,
 } from "../reconcile";
 import {
   shouldRunFundCycle,
@@ -229,25 +230,33 @@ async function main() {
           lastProcessedBlock = currentBlock;
         }
 
-        // Run NFT reconciliation periodically (non-blocking health check)
+        // Run NFT reconciliation periodically
         if (shouldRunReconciliation()) {
-          runReconciliation(provider, network).catch((err) => {
+          try {
+            await runReconciliation(provider, network);
+          } catch (err) {
             console.error(`[RECONCILE] Error: ${err}`);
-          });
+          }
         }
 
         // Run fund withdrawal & distribution cycle periodically
-        if (shouldRunFundCycle()) {
-          runFundCycle(provider, network).catch((err) => {
+        // Skip if provisioning is in progress to avoid contention
+        if (shouldRunFundCycle() && !isProvisioningInProgress()) {
+          try {
+            await runFundCycle(provider, network);
+          } catch (err) {
             console.error(`[FUND] Error: ${err}`);
-          });
+          }
         }
 
         // Check gas balance and swap if needed
-        if (shouldRunGasCheck()) {
-          runGasCheck(provider, network).catch((err) => {
+        // Skip if provisioning is in progress to avoid contention
+        if (shouldRunGasCheck() && !isProvisioningInProgress()) {
+          try {
+            await runGasCheck(provider, network);
+          } catch (err) {
             console.error(`[GAS] Error: ${err}`);
-          });
+          }
         }
       } catch (err) {
         console.error(`Polling error: ${err}`);
