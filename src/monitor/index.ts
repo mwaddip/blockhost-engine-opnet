@@ -2,7 +2,6 @@
  * Event monitor for BlockhostSubscriptions contract (OPNet)
  *
  * Polls OPNet blocks for contract events and dispatches to handlers.
- * Pipeline serializes subscription-create operations with persistent state.
  * Also runs admin commands, NFT reconciliation, and fund management.
  */
 
@@ -10,9 +9,7 @@ import { getContract, JSONRpcProvider } from "opnet";
 import { networks, type Network } from "@btc-vision/bitcoin";
 import {
   BLOCKHOST_SUBSCRIPTIONS_ABI,
-  ACCESS_CREDENTIAL_NFT_ABI,
   type IBlockhostSubscriptions,
-  type IAccessCredentialNFT,
 } from "../fund-manager/contract-abis";
 import {
   handleSubscriptionCreated,
@@ -41,13 +38,8 @@ import {
   getGasCheckInterval,
 } from "../fund-manager";
 import { loadWeb3Config } from "../fund-manager/web3-config";
-import { getCommand } from "../provisioner";
-import { createPipeline, type Pipeline } from "blockhost-runner";
 
 const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
-
-/** Module-level pipeline instance — accessible by handlers and reconcile. */
-export let pipeline: Pipeline;
 
 /**
  * Process a single block for contract events.
@@ -159,29 +151,6 @@ async function dispatchEvent(event: any, txHash: string, contract: IBlockhostSub
   }
 }
 
-/**
- * Initialize the pipeline's token counter from on-chain totalSupply.
- * Called once on startup when next_token_id == -1.
- */
-async function initTokenCounter(provider: JSONRpcProvider, network: Network): Promise<void> {
-  const web3Config = loadWeb3Config();
-  const nftContract = getContract<IAccessCredentialNFT>(
-    web3Config.nftContract,
-    ACCESS_CREDENTIAL_NFT_ABI,
-    provider,
-    network,
-  );
-
-  const supplyResult = await nftContract.totalSupply();
-  if ('error' in supplyResult) {
-    throw new Error(`totalSupply query failed: ${String(supplyResult.error)}`);
-  }
-
-  const supply = Number(supplyResult.properties.totalSupply);
-  pipeline.setNextTokenId(supply);
-  console.log(`[PIPELINE] Token counter initialized from chain: next_token_id=${supply}`);
-}
-
 async function main() {
   // Load configuration from web3-defaults.yaml (with env var fallback)
   let rpcUrl: string;
@@ -207,27 +176,6 @@ async function main() {
   console.log(`Poll Interval: ${POLL_INTERVAL_MS}ms`);
   console.log("----------------------------------------------\n");
 
-  // Initialize pipeline
-  pipeline = createPipeline({
-    stateFile: '/var/lib/blockhost/pipeline.json',
-    commands: {
-      bhcrypt: 'bhcrypt',
-      create: getCommand('create'),
-      mint: 'blockhost-mint-nft',
-      updateGecos: getCommand('update-gecos'),
-    },
-    serverKeyPath: '/etc/blockhost/server.key',
-    timeouts: {
-      crypto: 10_000,
-      vmCreate: 600_000,
-      mint: 900_000,
-      db: 10_000,
-    },
-    retry: { baseMs: 5_000, maxRetries: 3 },
-    workingDir: '/var/lib/blockhost',
-  });
-  console.log(`Pipeline: initialized (state: /var/lib/blockhost/pipeline.json)`);
-
   // Load admin configuration (optional)
   const adminConfig = loadAdminConfig();
   if (adminConfig) {
@@ -247,24 +195,6 @@ async function main() {
     provider,
     network,
   );
-
-  // Initialize token counter if needed
-  if (pipeline.getNextTokenId() === -1) {
-    try {
-      await initTokenCounter(provider, network);
-    } catch (err) {
-      console.error(`[PIPELINE] Failed to initialize token counter: ${err}`);
-      console.error(`[PIPELINE] Will retry on first subscription event`);
-    }
-  } else {
-    console.log(`[PIPELINE] Token counter loaded: next_token_id=${pipeline.getNextTokenId()}`);
-  }
-
-  // Resume incomplete pipeline from previous run (crash recovery)
-  if (pipeline.hasActiveEntry()) {
-    console.log(`[PIPELINE] Resuming incomplete pipeline from previous run...`);
-    await pipeline.resumeOrDrain();
-  }
 
   // Start from current block
   let lastProcessedBlock = await provider.getBlockNumber();
@@ -299,22 +229,25 @@ async function main() {
           lastProcessedBlock = currentBlock;
         }
 
-        // Drain pipeline queue (processes items enqueued during event handling)
-        await pipeline.resumeOrDrain();
+        // Run NFT reconciliation periodically (non-blocking health check)
+        if (shouldRunReconciliation()) {
+          runReconciliation(provider, network).catch((err) => {
+            console.error(`[RECONCILE] Error: ${err}`);
+          });
+        }
 
-        // Background tasks — only when pipeline is idle
-        if (!pipeline.isPipelineBusy()) {
-          if (shouldRunReconciliation()) {
-            await runReconciliation(provider, network);
-          }
+        // Run fund withdrawal & distribution cycle periodically
+        if (shouldRunFundCycle()) {
+          runFundCycle(provider, network).catch((err) => {
+            console.error(`[FUND] Error: ${err}`);
+          });
+        }
 
-          if (shouldRunFundCycle()) {
-            await runFundCycle(provider, network);
-          }
-
-          if (shouldRunGasCheck()) {
-            await runGasCheck(provider, network);
-          }
+        // Check gas balance and swap if needed
+        if (shouldRunGasCheck()) {
+          runGasCheck(provider, network).catch((err) => {
+            console.error(`[GAS] Error: ${err}`);
+          });
         }
       } catch (err) {
         console.error(`Polling error: ${err}`);

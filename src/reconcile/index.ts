@@ -3,7 +3,6 @@
  *
  * Periodically checks that local NFT state (vms.json) matches on-chain state.
  * Fixes discrepancies caused by partial failures during VM provisioning.
- * Also performs token counter drift correction against on-chain totalSupply.
  */
 
 import { getContract, type JSONRpcProvider } from "opnet";
@@ -16,7 +15,6 @@ import {
   ACCESS_CREDENTIAL_NFT_ABI,
   type IAccessCredentialNFT,
 } from "../fund-manager/contract-abis";
-import { pipeline } from "../monitor";
 
 const VMS_JSON_PATH = "/var/lib/blockhost/vms.json";
 const RECONCILE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -38,6 +36,29 @@ interface VmsDatabase {
 
 let lastReconcileTime = 0;
 let reconcileInProgress = false;
+
+/**
+ * Check if the provisioner's create command is currently running
+ */
+function isProvisioningInProgress(): boolean {
+  try {
+    const result = spawnSync("pgrep", ["-f", getCommand("create")], {
+      encoding: "utf8",
+    });
+    if (result.stdout && result.stdout.trim()) {
+      return true;
+    }
+
+    // Also check for lock file if one exists
+    if (fs.existsSync("/var/run/blockhost-provisioning.lock")) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Load NFT contract address from web3-defaults.yaml
@@ -105,7 +126,7 @@ print(f"Marked token {token_id} as minted for {vm_name}")
     });
     console.log(`[RECONCILE] ${result.trim()}`);
     return true;
-  } catch {
+  } catch (err) {
     // Python module might not be available, fall back to direct JSON update
     console.warn(`[RECONCILE] Python update failed, will use direct JSON update`);
     return false;
@@ -199,9 +220,9 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
     return;
   }
 
-  // Skip if pipeline is busy (replaces former pgrep check)
-  if (pipeline.isPipelineBusy()) {
-    console.log(`[RECONCILE] Skipping - pipeline busy`);
+  // Check if provisioning is in progress
+  if (isProvisioningInProgress()) {
+    console.log(`[RECONCILE] Skipping - provisioning in progress`);
     return;
   }
 
@@ -245,27 +266,20 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
 
     const onChainCount = Number(onChainSupply);
 
-    // Token counter drift correction: if chain has more tokens, correct upward
-    const localNextId = pipeline.getNextTokenId();
-    if (localNextId !== -1 && onChainCount > localNextId) {
-      console.log(`[RECONCILE] Token counter drift: pipeline=${localNextId}, chain=${onChainCount}. Correcting.`);
-      pipeline.setNextTokenId(onChainCount);
-    }
-
-    // Derive local expected next ID from reserved_nft_tokens keys (for reconciliation)
-    let localMaxReserved = 0;
+    // Derive local expected next ID from reserved_nft_tokens keys
+    let localNextId = 0;
     if (localDb.reserved_nft_tokens) {
       const reservedIds = Object.keys(localDb.reserved_nft_tokens).map(k => parseInt(k, 10));
       if (reservedIds.length > 0) {
-        localMaxReserved = Math.max(...reservedIds) + 1;
+        localNextId = Math.max(...reservedIds) + 1;
       }
     }
 
     // If on-chain has more tokens than local expects, we need to reconcile
-    if (onChainCount > localMaxReserved) {
-      console.log(`[RECONCILE] Discrepancy detected: on-chain has ${onChainCount} tokens, local max reserved=${localMaxReserved - 1}`);
+    if (onChainCount > localNextId) {
+      console.log(`[RECONCILE] Discrepancy detected: on-chain has ${onChainCount} tokens, local max reserved=${localNextId - 1}`);
 
-      for (let tokenId = localMaxReserved; tokenId < onChainCount; tokenId++) {
+      for (let tokenId = localNextId; tokenId < onChainCount; tokenId++) {
         await reconcileToken(nftContract, localDb, tokenId);
       }
     }
