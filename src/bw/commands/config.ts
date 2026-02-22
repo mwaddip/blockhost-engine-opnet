@@ -11,13 +11,13 @@ import { getContract, JSONRpcProvider } from 'opnet';
 import type { Network } from '@btc-vision/bitcoin';
 import { Address } from '@btc-vision/transaction';
 import type { Addressbook } from '../../fund-manager/types.js';
-import { resolveWallet } from '../../fund-manager/addressbook.js';
-import { isValidInternalAddress } from '../../fund-manager/addressbook.js';
+import { resolveWallet, isValidInternalAddress } from '../../fund-manager/addressbook.js';
 import {
     BLOCKHOST_SUBSCRIPTIONS_ABI,
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
 import { loadWeb3Config } from '../../fund-manager/web3-config.js';
+import { ZERO_ADDRESS, sendSigned } from '../../fund-manager/token-utils.js';
 
 export async function configCommand(
     args: string[],
@@ -52,9 +52,7 @@ export async function configCommand(
             process.exit(1);
         }
         const tokenAddr = result.properties.token.toString();
-        const zeroAddr =
-            '0x0000000000000000000000000000000000000000000000000000000000000000';
-        if (tokenAddr === zeroAddr) {
+        if (tokenAddr === ZERO_ADDRESS) {
             console.error('No payment token configured');
             process.exit(1);
         }
@@ -95,13 +93,7 @@ export async function configCommand(
         process.exit(1);
     }
 
-    await sim.sendTransaction({
-        signer: serverWallet.keypair,
-        mldsaSigner: serverWallet.mldsaKeypair,
-        refundTo: serverWallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(sim, serverWallet, network);
 
     console.log(address);
 }

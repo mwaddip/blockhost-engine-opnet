@@ -267,7 +267,6 @@ export async function shutdownAdminCommands(): Promise<void> {
   console.log(`[ADMIN] Admin command system shutdown`);
 }
 
-// Re-export types and utilities
-export * from "./types";
-export * from "./config";
-export * from "./nonces";
+// Re-export only what external consumers need
+export { loadAdminConfig } from "./config";
+export type { AdminConfig } from "./types";

@@ -15,6 +15,43 @@ import type { Network } from '@btc-vision/bitcoin';
 import type { Wallet } from '@btc-vision/transaction';
 import type { TokenBalance } from './types.js';
 
+/** Maximum satoshis a single contract interaction may spend on fees. */
+export const MAX_SAT_TO_SPEND = 100_000n;
+
+/** OPNet zero address (32 bytes, 0x-prefixed). */
+export const ZERO_ADDRESS =
+    '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+/** Minimal structural type for a simulation result that can be sent. */
+interface Sendable {
+    sendTransaction(opts: {
+        signer: Wallet['keypair'];
+        mldsaSigner: Wallet['mldsaKeypair'];
+        refundTo: string;
+        maximumAllowedSatToSpend: bigint;
+        network: Network;
+    }): Promise<unknown>;
+}
+
+/**
+ * Send a signed transaction from a simulation result.
+ * Wraps the repetitive signer/mldsaSigner/refundTo/maxSat/network fields.
+ */
+export async function sendSigned(
+    sim: Sendable,
+    wallet: Wallet,
+    network: Network,
+    maxSat: bigint = MAX_SAT_TO_SPEND,
+): Promise<unknown> {
+    return sim.sendTransaction({
+        signer: wallet.keypair,
+        mldsaSigner: wallet.mldsaKeypair,
+        refundTo: wallet.p2tr,
+        maximumAllowedSatToSpend: maxSat,
+        network,
+    });
+}
+
 /**
  * Get OP20 token balance for a given address.
  *
@@ -122,13 +159,7 @@ export async function transferToken(
         throw new Error(`transfer simulation failed: ${sim.error}`);
     }
 
-    await sim.sendTransaction({
-        signer: wallet.keypair,
-        mldsaSigner: wallet.mldsaKeypair,
-        refundTo: wallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(sim, wallet, network);
 }
 
 /**
@@ -152,13 +183,13 @@ export async function getAllTokenBalances(
     if ('error' in tokenResult) return [];
 
     const tokenAddr = tokenResult.properties.token.toString();
-    const zeroAddr = '0x' + '0'.repeat(64);
-    if (tokenAddr === zeroAddr) return [];
+    if (tokenAddr === ZERO_ADDRESS) return [];
 
     try {
         const bal = await getPaymentTokenBalance(tokenAddr, walletAddress, provider, network);
         return [bal];
-    } catch {
+    } catch (err) {
+        console.error(`[FUND] Error fetching token balance for ${walletAddress}: ${err}`);
         return [];
     }
 }

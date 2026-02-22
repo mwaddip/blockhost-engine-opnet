@@ -10,8 +10,9 @@ import * as fs from "fs";
 import * as yaml from "js-yaml";
 import type { FundManagerConfig, RevenueShareConfig } from "./types";
 
-const BLOCKHOST_CONFIG_PATH = "/etc/blockhost/blockhost.yaml";
-const REVENUE_SHARE_PATH = "/etc/blockhost/revenue-share.json";
+const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
+const BLOCKHOST_CONFIG_PATH = `${CONFIG_DIR}/blockhost.yaml`;
+const REVENUE_SHARE_PATH = `${CONFIG_DIR}/revenue-share.json`;
 
 const DEFAULTS: FundManagerConfig = {
   fund_cycle_interval_hours: 24,
@@ -98,15 +99,26 @@ export function loadRevenueShareConfig(): RevenueShareConfig {
       return disabled;
     }
 
+    const parsed = recipients.map(r => ({
+      role: r.role as string,
+      bps: (r.bps as number | undefined) ?? (r.percent ? Math.round((r.percent as number) * 100) : 0),
+      percent: r.percent as number | undefined,
+    }));
+
+    // Validate recipient bps sum matches total_bps
+    const bpsSum = parsed.reduce((sum, r) => sum + r.bps, 0);
+    if (bpsSum !== totalBps) {
+      console.error(
+        `[FUND] Revenue share bps mismatch: recipients sum to ${bpsSum} but total_bps is ${totalBps}`,
+      );
+      return disabled;
+    }
+
     return {
       enabled: true,
       total_bps: totalBps,
       total_percent: raw.total_percent as number | undefined,
-      recipients: recipients.map(r => ({
-        role: r.role as string,
-        bps: (r.bps as number | undefined) ?? (r.percent ? Math.round((r.percent as number) * 100) : 0),
-        percent: r.percent as number | undefined,
-      })),
+      recipients: parsed,
     };
   } catch (err) {
     console.error(`[FUND] Error loading revenue share config: ${err}`);

@@ -13,15 +13,13 @@ import {
     MLDSASecurityLevel,
     type Wallet,
 } from '@btc-vision/transaction';
-import { loadRpcConfig } from './web3-config.js';
-
 /**
  * Read a mnemonic phrase from a keyfile.
  *
  * @param keyfilePath - Absolute path to the keyfile
  * @returns The mnemonic phrase (trimmed, single line)
  */
-export function readKeyfile(keyfilePath: string): string {
+function readKeyfile(keyfilePath: string): string {
     const raw = fs.readFileSync(keyfilePath, 'utf8').trim();
     if (raw.length === 0) {
         throw new Error(`Keyfile is empty: ${keyfilePath}`);
@@ -48,14 +46,8 @@ export function walletFromKeyfile(keyfilePath: string, network: Network): Wallet
  * @param network - Bitcoin network
  * @returns Wallet with keypair, mldsaKeypair, p2tr, address
  */
-export function walletFromMnemonic(phrase: string, network: Network): Wallet {
+function walletFromMnemonic(phrase: string, network: Network): Wallet {
     const mnemonic = new Mnemonic(phrase, '', network, MLDSASecurityLevel.LEVEL2);
     return mnemonic.deriveOPWallet(AddressTypes.P2TR, 0);
 }
 
-/**
- * Get the default network from web3-defaults.yaml configuration.
- */
-export function getNetworkFromConfig(): Network {
-    return loadRpcConfig().network;
-}

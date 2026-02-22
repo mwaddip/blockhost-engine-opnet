@@ -33,6 +33,9 @@ import { resolveToken } from '../cli-utils.js';
 import {
     getTokenBalance,
     formatTokenBalance,
+    sendSigned,
+    MAX_SAT_TO_SPEND,
+    parseUnits,
 } from '../../fund-manager/token-utils.js';
 import { loadWeb3Config } from '../../fund-manager/web3-config.js';
 
@@ -52,15 +55,8 @@ function isBtc(token: string): boolean {
     return t === 'btc' || t === 'native';
 }
 
-function parseAmount(amountStr: string, decimals: number): bigint {
-    const parts = amountStr.split('.');
-    const whole = parts[0] ?? '0';
-    const frac = (parts[1] ?? '').padEnd(decimals, '0').slice(0, decimals);
-    return BigInt(whole) * 10n ** BigInt(decimals) + BigInt(frac);
-}
-
 function parseSats(amountStr: string): bigint {
-    return parseAmount(amountStr, 8);
+    return parseUnits(amountStr, 8);
 }
 
 function formatSats(sats: bigint): string {
@@ -123,13 +119,7 @@ async function ensureAllowance(
         throw new Error(`increaseAllowance failed: ${sim.error}`);
     }
 
-    await sim.sendTransaction({
-        signer: wallet.keypair,
-        mldsaSigner: wallet.mldsaKeypair,
-        refundTo: wallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(sim, wallet, network);
     console.log('  Allowance set.');
 }
 
@@ -158,7 +148,7 @@ async function executeMotoSwap(
         network,
     );
 
-    const amountIn = parseAmount(amountStr, decimals);
+    const amountIn = parseUnits(amountStr, decimals);
     if (amountIn === 0n) throw new Error('Amount is zero');
 
     console.log(`  Input: ${amountStr} ${symbol}`);
@@ -230,13 +220,7 @@ async function executeMotoSwap(
         throw new Error(`swap simulation failed: ${sim.error}`);
     }
 
-    await sim.sendTransaction({
-        signer: wallet.keypair,
-        mldsaSigner: wallet.mldsaKeypair,
-        refundTo: wallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(sim, wallet, network);
 }
 
 // ─── NativeSwap: BTC → OP20 ──────────────────────────────────────
@@ -306,13 +290,7 @@ async function executeNativeSwapBuy(
 
     const preBlock = BigInt(await provider.getBlockNumber());
 
-    await reserveSim.sendTransaction({
-        signer: wallet.keypair,
-        mldsaSigner: wallet.mldsaKeypair,
-        refundTo: wallet.p2tr,
-        maximumAllowedSatToSpend: satsIn + 100_000n, // swap amount + gas headroom
-        network,
-    });
+    await sendSigned(reserveSim, wallet, network, satsIn + MAX_SAT_TO_SPEND);
     console.log(`  Reserved at block ${preBlock}. Waiting for next block...`);
 
     // Wait for next block
@@ -326,13 +304,7 @@ async function executeNativeSwapBuy(
         throw new Error(`swap execution failed: ${swapSim.error}`);
     }
 
-    await swapSim.sendTransaction({
-        signer: wallet.keypair,
-        mldsaSigner: wallet.mldsaKeypair,
-        refundTo: wallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(swapSim, wallet, network);
 }
 
 // ─── NativeSwap: OP20 → BTC ──────────────────────────────────────
@@ -369,7 +341,7 @@ async function executeNativeSwapSell(
         network,
     );
 
-    const amountIn = parseAmount(amountStr, decimals);
+    const amountIn = parseUnits(amountStr, decimals);
     if (amountIn === 0n) throw new Error('Amount is zero');
     if (amountIn > balance) {
         throw new Error(
@@ -415,13 +387,7 @@ async function executeNativeSwapSell(
         throw new Error(`listLiquidity failed: ${listSim.error}`);
     }
 
-    await listSim.sendTransaction({
-        signer: wallet.keypair,
-        mldsaSigner: wallet.mldsaKeypair,
-        refundTo: wallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(listSim, wallet, network);
 
     console.log(
         `  Listed ${formatTokenBalance(amountIn, decimals, symbol)} for BTC.`,

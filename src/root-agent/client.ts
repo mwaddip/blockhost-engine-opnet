@@ -86,7 +86,13 @@ export async function iptablesClose(port: number, proto = "tcp", comment = "bloc
 
 export async function generateWallet(name: string): Promise<{ address: string }> {
   const result = await callRootAgent("generate-wallet", { name });
-  return { address: result.address as string };
+  const address = result.address;
+  if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(address)) {
+    throw new RootAgentError(
+      `generate-wallet returned invalid address: ${String(address)}`,
+    );
+  }
+  return { address };
 }
 
 export async function addressbookSave(entries: Record<string, unknown>): Promise<void> {

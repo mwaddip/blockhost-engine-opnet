@@ -12,6 +12,7 @@ import { resolveAddress } from '../../fund-manager/addressbook.js';
 import {
     getTokenBalance,
     formatTokenBalance,
+    ZERO_ADDRESS,
 } from '../../fund-manager/token-utils.js';
 import { resolveToken, formatBtc } from '../cli-utils.js';
 import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
@@ -121,9 +122,7 @@ export async function balanceCommand(
         if (!('error' in paymentResult)) {
             const tokenAddr =
                 paymentResult.properties.token.toString();
-            const zeroAddr =
-                '0x0000000000000000000000000000000000000000000000000000000000000000';
-            if (tokenAddr !== zeroAddr) {
+            if (tokenAddr !== ZERO_ADDRESS) {
                 const { balance, decimals, symbol } =
                     await getTokenBalance(
                         tokenAddr,

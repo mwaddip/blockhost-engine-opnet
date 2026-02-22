@@ -266,15 +266,22 @@ async function main() {
     }
   };
 
-  // Handle graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log("\nShutting down monitor...");
+  // Handle graceful shutdown (SIGINT from Ctrl+C, SIGTERM from systemctl stop)
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return; // Guard against double-signal
+    shuttingDown = true;
+    console.log(`\n[${signal}] Shutting down monitor...`);
     running = false;
     if (adminConfig) {
       await shutdownAdminCommands();
     }
+    await provider.close();
     setTimeout(() => process.exit(0), 1000);
-  });
+  };
+
+  process.on("SIGINT", () => { void shutdown("SIGINT"); });
+  process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
 
   console.log("Monitor is running. Press Ctrl+C to stop.\n");
   await poll();

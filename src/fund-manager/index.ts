@@ -103,18 +103,35 @@ export async function runFundCycle(provider: JSONRpcProvider, network: Network):
     // Step 1: Withdraw from contract to hot wallet
     await withdrawFromContract(book, config, contract, contractAddress, provider, network);
 
-    // Step 2: Top up hot wallet gas (server → hot)
-    await topUpHotWalletGas(book, config, provider, contract, network);
+    // Steps 2-5 each wrapped so a single failure doesn't skip the rest
+    try {
+      // Step 2: Top up hot wallet gas (server → hot)
+      await topUpHotWalletGas(book, config, provider, contract, network);
+    } catch (err) {
+      console.error(`[FUND] Step 2 (hot wallet gas) failed: ${err}`);
+    }
 
-    // Step 3: Top up server stablecoin buffer (hot → server)
-    await topUpServerStablecoinBuffer(book, config, provider, contract, network);
+    try {
+      // Step 3: Top up server stablecoin buffer (hot → server)
+      await topUpServerStablecoinBuffer(book, config, provider, contract, network);
+    } catch (err) {
+      console.error(`[FUND] Step 3 (stablecoin buffer) failed: ${err}`);
+    }
 
-    // Step 4: Revenue shares (hot → dev/broker)
-    const revenueConfig = loadRevenueShareConfig();
-    await distributeRevenueShares(book, revenueConfig, provider, contract, network);
+    try {
+      // Step 4: Revenue shares (hot → dev/broker)
+      const revenueConfig = loadRevenueShareConfig();
+      await distributeRevenueShares(book, revenueConfig, provider, contract, network);
+    } catch (err) {
+      console.error(`[FUND] Step 4 (revenue shares) failed: ${err}`);
+    }
 
-    // Step 5: Remainder to admin (hot → admin)
-    await sendRemainderToAdmin(book, provider, contract, network);
+    try {
+      // Step 5: Remainder to admin (hot → admin)
+      await sendRemainderToAdmin(book, provider, contract, network);
+    } catch (err) {
+      console.error(`[FUND] Step 5 (remainder to admin) failed: ${err}`);
+    }
 
     console.log("[FUND] Fund cycle complete");
   } catch (err) {

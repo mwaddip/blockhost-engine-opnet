@@ -23,6 +23,7 @@ import {
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
 import { loadWeb3Config } from '../../fund-manager/web3-config.js';
+import { sendSigned } from '../../fund-manager/token-utils.js';
 
 /**
  * Core withdraw operation — withdraw payment tokens from contract.
@@ -60,13 +61,7 @@ export async function executeWithdraw(
         throw new Error(`withdraw simulation failed: ${sim.error}`);
     }
 
-    await sim.sendTransaction({
-        signer: serverWallet.keypair,
-        mldsaSigner: serverWallet.mldsaKeypair,
-        refundTo: serverWallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(sim, serverWallet, network);
 }
 
 /**

@@ -23,7 +23,8 @@ import {
 } from '../../fund-manager/contract-abis.js';
 import { loadWeb3Config } from '../../fund-manager/web3-config.js';
 
-const BLOCKHOST_CONFIG_PATH = '/etc/blockhost/blockhost.yaml';
+const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
+const BLOCKHOST_CONFIG_PATH = `${CONFIG_DIR}/blockhost.yaml`;
 
 function loadAdminNftId(): number {
     if (!fs.existsSync(BLOCKHOST_CONFIG_PATH)) {

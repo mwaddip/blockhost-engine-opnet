@@ -9,8 +9,9 @@ import * as fs from "fs";
 import * as yaml from "js-yaml";
 import type { AdminConfig, CommandDatabase } from "./types";
 
-const BLOCKHOST_CONFIG_FILE = "/etc/blockhost/blockhost.yaml";
-const ADMIN_COMMANDS_FILE = "/etc/blockhost/admin-commands.json";
+const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
+const BLOCKHOST_CONFIG_FILE = `${CONFIG_DIR}/blockhost.yaml`;
+const ADMIN_COMMANDS_FILE = `${CONFIG_DIR}/admin-commands.json`;
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{64}$/;
 const HEX32_RE = /^[0-9a-fA-F]{64}$/;
@@ -84,9 +85,3 @@ export function loadCommandDatabase(): CommandDatabase | null {
   }
 }
 
-/**
- * Get the server private key file path
- */
-export function getServerPrivateKeyPath(): string {
-  return "/etc/blockhost/server.key";
-}

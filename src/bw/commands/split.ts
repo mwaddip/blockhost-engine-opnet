@@ -17,6 +17,7 @@ import {
     transferToken,
     getTokenBalance,
     formatTokenBalance,
+    parseUnits,
 } from '../../fund-manager/token-utils.js';
 import { resolveToken, formatBtc } from '../cli-utils.js';
 import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
@@ -95,11 +96,7 @@ export async function splitCommand(
 
     if (resolved.isNative) {
         // Split BTC — parse to sats
-        const parts = amountStr.split('.');
-        const wholePart = parts[0] ?? '0';
-        const fracPart = (parts[1] ?? '').padEnd(8, '0').slice(0, 8);
-        const totalSats =
-            BigInt(wholePart) * 100_000_000n + BigInt(fracPart);
+        const totalSats = parseUnits(amountStr, 8);
         let remaining = totalSats;
 
         console.log(
@@ -141,11 +138,7 @@ export async function splitCommand(
         network,
     );
 
-    const parts = amountStr.split('.');
-    const wholePart = parts[0] ?? '0';
-    const fracPart = (parts[1] ?? '').padEnd(decimals, '0').slice(0, decimals);
-    const totalAmount =
-        BigInt(wholePart) * 10n ** BigInt(decimals) + BigInt(fracPart);
+    const totalAmount = parseUnits(amountStr, decimals);
     let remaining = totalAmount;
 
     console.log(

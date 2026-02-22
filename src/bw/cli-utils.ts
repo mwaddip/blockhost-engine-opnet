@@ -12,6 +12,7 @@ import {
 } from '../fund-manager/contract-abis.js';
 import { isValidInternalAddress } from '../fund-manager/addressbook.js';
 import { loadWeb3Config } from '../fund-manager/web3-config.js';
+import { ZERO_ADDRESS } from '../fund-manager/token-utils.js';
 
 /**
  * Create an OPNet provider and BlockhostSubscriptions contract from
@@ -57,10 +58,7 @@ export async function resolveToken(
             throw new Error('Failed to query payment token from contract');
         }
         const tokenAddr = result.properties.token.toString();
-        if (
-            tokenAddr ===
-            '0x0000000000000000000000000000000000000000000000000000000000000000'
-        ) {
+        if (tokenAddr === ZERO_ADDRESS) {
             throw new Error('No payment token configured on contract');
         }
         return { address: tokenAddr, isNative: false };

@@ -16,6 +16,7 @@ import {
     BLOCKHOST_SUBSCRIPTIONS_ABI,
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
+import { sendSigned } from '../../fund-manager/token-utils.js';
 
 export async function planCommand(
     args: string[],
@@ -86,21 +87,15 @@ export async function planCommand(
         process.exit(1);
     }
 
-    const result = await sim.sendTransaction({
-        signer: serverWallet.keypair,
-        mldsaSigner: serverWallet.mldsaKeypair,
-        refundTo: serverWallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    const result = await sendSigned(sim, serverWallet, network);
 
     // Extract plan ID from the simulation result properties
     if (sim.properties.planId !== undefined) {
         console.log(sim.properties.planId.toString());
     } else {
         // Check events for PlanCreated
-        if (result && 'events' in result) {
-            const events = result.events as Array<{ name: string; values: Record<string, unknown> }>;
+        if (result && typeof result === 'object' && 'events' in result) {
+            const events = (result as { events: Array<{ name: string; values: Record<string, unknown> }> }).events;
             const planEvent = events.find(
                 (e) => e.name === 'PlanCreated',
             );

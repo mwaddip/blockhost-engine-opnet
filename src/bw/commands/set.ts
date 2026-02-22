@@ -17,6 +17,7 @@ import {
     type IAccessCredentialNFT,
 } from '../../fund-manager/contract-abis.js';
 import { loadWeb3Config } from '../../fund-manager/web3-config.js';
+import { sendSigned } from '../../fund-manager/token-utils.js';
 
 export async function setCommand(
     args: string[],
@@ -99,13 +100,7 @@ export async function setCommand(
         process.exit(1);
     }
 
-    await sim.sendTransaction({
-        signer: serverWallet.keypair,
-        mldsaSigner: serverWallet.mldsaKeypair,
-        refundTo: serverWallet.p2tr,
-        maximumAllowedSatToSpend: 100_000n,
-        network,
-    });
+    await sendSigned(sim, serverWallet, network);
 
     await provider.close();
     console.log(`Updated NFT #${nftId} userEncrypted.`);

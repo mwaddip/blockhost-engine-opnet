@@ -132,77 +132,81 @@ async function main(): Promise<void> {
     const { provider, contract, network } =
         createProviderAndContract();
 
-    switch (command) {
-        case 'send':
-            await sendCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'balance':
-            await balanceCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'split':
-            await splitCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'withdraw':
-            await withdrawCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'swap':
-            await swapCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'config':
-            await configCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'plan':
-            await planCommand(
-                args,
-                book,
-                provider,
-                contract,
-                network,
-            );
-            break;
-        case 'set':
-            await setCommand(args, book, provider, network);
-            break;
-        default:
-            console.error(`Unknown command: ${command}`);
-            printUsage();
-            process.exit(1);
+    try {
+        switch (command) {
+            case 'send':
+                await sendCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'balance':
+                await balanceCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'split':
+                await splitCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'withdraw':
+                await withdrawCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'swap':
+                await swapCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'config':
+                await configCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'plan':
+                await planCommand(
+                    args,
+                    book,
+                    provider,
+                    contract,
+                    network,
+                );
+                break;
+            case 'set':
+                await setCommand(args, book, provider, network);
+                break;
+            default:
+                console.error(`Unknown command: ${command}`);
+                printUsage();
+                process.exit(1);
+        }
+    } finally {
+        await provider.close();
     }
 }
 

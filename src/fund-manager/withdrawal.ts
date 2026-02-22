@@ -12,7 +12,7 @@ import type { JSONRpcProvider } from "opnet";
 import type { Network } from "@btc-vision/bitcoin";
 import type { Addressbook, FundManagerConfig } from "./types";
 import type { IBlockhostSubscriptions } from "./contract-abis";
-import { getTokenBalance, formatTokenBalance } from "./token-utils";
+import { getTokenBalance, formatTokenBalance, ZERO_ADDRESS } from "./token-utils";
 import { executeWithdraw } from "../bw/commands/withdraw";
 
 /**
@@ -45,8 +45,7 @@ export async function withdrawFromContract(
   }
 
   const tokenAddr = tokenResult.properties.token.toString();
-  const zeroAddr = '0x' + '0'.repeat(64);
-  if (tokenAddr === zeroAddr) {
+  if (tokenAddr === ZERO_ADDRESS) {
     console.log("[FUND] No payment token configured, skipping withdrawal");
     return;
   }

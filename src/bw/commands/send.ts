@@ -17,6 +17,7 @@ import {
 import {
     transferToken,
     getTokenBalance,
+    parseUnits,
 } from '../../fund-manager/token-utils.js';
 import { resolveToken } from '../cli-utils.js';
 import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
@@ -47,10 +48,7 @@ export async function executeSend(
 
     if (resolved.isNative) {
         // Send BTC — amount is in BTC, convert to sats
-        const parts = amountStr.split('.');
-        const wholePart = parts[0] ?? '0';
-        const fracPart = (parts[1] ?? '').padEnd(8, '0').slice(0, 8);
-        const sats = BigInt(wholePart) * 100_000_000n + BigInt(fracPart);
+        const sats = parseUnits(amountStr, 8);
 
         const { TransactionFactory } = await import(
             '@btc-vision/transaction'
@@ -94,12 +92,7 @@ export async function executeSend(
         network,
     );
 
-    // Parse amount with decimals
-    const parts = amountStr.split('.');
-    const wholePart = parts[0] ?? '0';
-    const fracPart = (parts[1] ?? '').padEnd(decimals, '0').slice(0, decimals);
-    const tokenAmount =
-        BigInt(wholePart) * 10n ** BigInt(decimals) + BigInt(fracPart);
+    const tokenAmount = parseUnits(amountStr, decimals);
 
     await transferToken(
         resolved.address,
