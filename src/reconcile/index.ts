@@ -82,7 +82,15 @@ function loadVmsDatabase(): VmsDatabase | null {
       return null;
     }
     const data = fs.readFileSync(VMS_JSON_PATH, "utf8");
-    return JSON.parse(data) as VmsDatabase;
+    const parsed: unknown = JSON.parse(data);
+    if (
+      typeof parsed !== "object" || parsed === null ||
+      !("vms" in parsed) || typeof (parsed as Record<string, unknown>).vms !== "object"
+    ) {
+      console.error(`[RECONCILE] Invalid vms.json: missing or malformed 'vms' key`);
+      return null;
+    }
+    return parsed as VmsDatabase;
   } catch (err) {
     console.error(`[RECONCILE] Error loading vms.json: ${err}`);
     return null;

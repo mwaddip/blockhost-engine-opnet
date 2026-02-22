@@ -42,21 +42,21 @@ export function loadFundManagerConfig(): FundManagerConfig {
       return { ...DEFAULTS };
     }
 
+    const safeBigInt = (v: unknown, fallback: bigint): bigint => {
+      if (v === undefined || v === null) return fallback;
+      return BigInt(Math.trunc(Number(v)));
+    };
+
     return {
       fund_cycle_interval_hours:
         (fm.fund_cycle_interval_hours as number) || DEFAULTS.fund_cycle_interval_hours,
       gas_check_interval_minutes:
         (fm.gas_check_interval_minutes as number) || DEFAULTS.gas_check_interval_minutes,
-      min_withdrawal_sats:
-        fm.min_withdrawal_sats ? BigInt(fm.min_withdrawal_sats as number) : DEFAULTS.min_withdrawal_sats,
-      gas_low_threshold_sats:
-        fm.gas_low_threshold_sats ? BigInt(fm.gas_low_threshold_sats as number) : DEFAULTS.gas_low_threshold_sats,
-      gas_swap_amount_sats:
-        fm.gas_swap_amount_sats ? BigInt(fm.gas_swap_amount_sats as number) : DEFAULTS.gas_swap_amount_sats,
-      server_stablecoin_buffer_sats:
-        fm.server_stablecoin_buffer_sats ? BigInt(fm.server_stablecoin_buffer_sats as number) : DEFAULTS.server_stablecoin_buffer_sats,
-      hot_wallet_gas_sats:
-        fm.hot_wallet_gas_sats ? BigInt(fm.hot_wallet_gas_sats as number) : DEFAULTS.hot_wallet_gas_sats,
+      min_withdrawal_sats: safeBigInt(fm.min_withdrawal_sats, DEFAULTS.min_withdrawal_sats),
+      gas_low_threshold_sats: safeBigInt(fm.gas_low_threshold_sats, DEFAULTS.gas_low_threshold_sats),
+      gas_swap_amount_sats: safeBigInt(fm.gas_swap_amount_sats, DEFAULTS.gas_swap_amount_sats),
+      server_stablecoin_buffer_sats: safeBigInt(fm.server_stablecoin_buffer_sats, DEFAULTS.server_stablecoin_buffer_sats),
+      hot_wallet_gas_sats: safeBigInt(fm.hot_wallet_gas_sats, DEFAULTS.hot_wallet_gas_sats),
     };
   } catch (err) {
     console.error(`[FUND] Error loading config: ${err}`);

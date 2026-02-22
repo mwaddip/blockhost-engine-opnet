@@ -9,6 +9,7 @@ import { eciesDecrypt, symmetricEncrypt, loadServerPrivateKey } from "../crypto"
 
 // Paths on the server
 const WORKING_DIR = "/var/lib/blockhost";
+const SSH_PORT = 22;
 
 export interface SubscriptionCreatedEvent {
   subscriptionId: bigint;
@@ -149,7 +150,7 @@ function encryptConnectionDetails(
 ): string | null {
   const connectionDetails = JSON.stringify({
     hostname,
-    port: 22,
+    port: SSH_PORT,
     username,
   });
 

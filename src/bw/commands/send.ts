@@ -128,7 +128,7 @@ export async function sendCommand(
     }
 
     const amount = parseFloat(amountStr);
-    if (isNaN(amount) || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0) {
         console.error(`Invalid amount: ${amountStr}`);
         process.exit(1);
     }

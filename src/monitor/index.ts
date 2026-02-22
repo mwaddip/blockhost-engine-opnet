@@ -5,7 +5,7 @@
  * Also runs admin commands, NFT reconciliation, and fund management.
  */
 
-import { getContract, JSONRpcProvider } from "opnet";
+import { getContract, JSONRpcProvider, type OPNetEvent, type ContractDecodedObjectResult } from "opnet";
 import { networks, type Network } from "@btc-vision/bitcoin";
 import {
   BLOCKHOST_SUBSCRIPTIONS_ABI,
@@ -79,27 +79,28 @@ async function processBlock(
  * Dispatch an ABI-decoded OPNetEvent to the appropriate handler.
  * After decodeEvents(), event.type is the name and event.properties has decoded fields.
  */
-async function dispatchEvent(event: any, txHash: string, contract: IBlockhostSubscriptions): Promise<void> {
-  const eventName: string = event.type ?? '';
-  const props = event.properties ?? {};
+async function dispatchEvent(event: OPNetEvent<ContractDecodedObjectResult>, txHash: string, contract: IBlockhostSubscriptions): Promise<void> {
+  const eventName = event.type;
+  const props = event.properties;
 
   switch (eventName) {
     case "SubscriptionCreated": {
+      const subId = props.subscriptionId as bigint;
       // userEncrypted is stored on-chain (not in the event) — read via contract call
       let userEncrypted = '0x';
       try {
-        const result = await contract.getUserEncrypted(BigInt(props.subscriptionId));
-        userEncrypted = String((result as any).properties?.data ?? '0x');
+        const result = await contract.getUserEncrypted(subId);
+        userEncrypted = result.properties.data || '0x';
       } catch (err) {
-        console.warn(`[WARN] Could not read userEncrypted for sub ${props.subscriptionId}: ${err}`);
+        console.warn(`[WARN] Could not read userEncrypted for sub ${subId}: ${err}`);
       }
 
       await handleSubscriptionCreated({
-        subscriptionId: props.subscriptionId,
-        planId: props.planId,
+        subscriptionId: subId,
+        planId: props.planId as bigint,
         subscriber: String(props.subscriber),
-        expiresAt: props.expiresAt,
-        paidAmount: props.paidAmount,
+        expiresAt: props.expiresAt as bigint,
+        paidAmount: props.paidAmount as bigint,
         userEncrypted,
       }, txHash);
       break;
@@ -107,36 +108,36 @@ async function dispatchEvent(event: any, txHash: string, contract: IBlockhostSub
 
     case "SubscriptionExtended":
       await handleSubscriptionExtended({
-        subscriptionId: props.subscriptionId,
-        planId: props.planId,
+        subscriptionId: props.subscriptionId as bigint,
+        planId: props.planId as bigint,
         extendedBy: String(props.extendedBy),
-        newExpiresAt: props.newExpiresAt,
-        paidAmount: props.paidAmount,
+        newExpiresAt: props.newExpiresAt as bigint,
+        paidAmount: props.paidAmount as bigint,
       }, txHash);
       break;
 
     case "SubscriptionCancelled":
       await handleSubscriptionCancelled({
-        subscriptionId: props.subscriptionId,
-        planId: props.planId,
+        subscriptionId: props.subscriptionId as bigint,
+        planId: props.planId as bigint,
         subscriber: String(props.subscriber),
       }, txHash);
       break;
 
     case "PlanCreated":
       await handlePlanCreated({
-        planId: props.planId,
-        name: props.name,
-        pricePerDayUsdCents: props.pricePerDay,
+        planId: props.planId as bigint,
+        name: props.name as string,
+        pricePerDayUsdCents: props.pricePerDay as bigint,
       }, txHash);
       break;
 
     case "PlanUpdated":
       await handlePlanUpdated({
-        planId: props.planId,
-        name: props.name,
-        pricePerDayUsdCents: props.pricePerDay,
-        active: props.active,
+        planId: props.planId as bigint,
+        name: props.name as string,
+        pricePerDayUsdCents: props.pricePerDay as bigint,
+        active: props.active as boolean,
       }, txHash);
       break;
 

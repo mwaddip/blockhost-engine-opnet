@@ -22,6 +22,7 @@ const activeKnocks: Map<string, ActiveKnock> = new Map();
 const KNOCK_ACTIVE_FILE = "/run/blockhost/knock.active";
 const HEARTBEAT_POLL_MS = 30_000;   // 30s poll interval
 const HEARTBEAT_STALE_MS = 15 * 60_000; // 15 min staleness threshold
+const MAX_KNOCK_DURATION_S = 3600;  // 1 hour hard cap on pre-login duration
 
 // --- IP Validation ---
 
@@ -333,8 +334,8 @@ export async function executeKnock(
     };
   }
 
-  // Validate duration
-  const duration = Math.max(1, params.duration || defaultDuration);
+  // Validate duration (capped to prevent indefinitely open ports)
+  const duration = Math.min(Math.max(1, params.duration || defaultDuration), MAX_KNOCK_DURATION_S);
 
   // Validate optional source IPv6 address
   const source = params.source;

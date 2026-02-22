@@ -41,8 +41,8 @@ Replaced 4 inline amount parsing blocks in `send.ts` (2 sites) and `split.ts` (2
 ### R4: `ZERO_ADDRESS` constant — FIXED
 Extracted `ZERO_ADDRESS` to `token-utils.ts`. All 5 locations now import the constant: `cli-utils.ts`, `balance.ts`, `config.ts`, `withdrawal.ts`, `token-utils.ts`.
 
-### R5: `hexToBytes()` — 2 locations (NOT FIXED)
-Identical implementations in `crypto.ts:21` and `admin/index.ts:27`. Below the 3x threshold — left as-is.
+### R5: `hexToBytes()` — 2 locations — FIXED
+Exported `hexToBytes` from `crypto.ts`, replaced duplicate in `admin/index.ts` with import.
 
 ### R6: No `executeX()` separation in `plan.ts`, `set.ts`, `config.ts` (NOT FIXED)
 Architectural note only. These mix `process.exit(1)` with contract calls. Would need refactoring for programmatic invocation. Not a bug.
@@ -62,12 +62,12 @@ Architectural note only. These mix `process.exit(1)` with contract calls. Would 
 ### V1: `BLOCKHOST_CONFIG_DIR` env var — NOT FIXED
 Used in path construction without validation. Mitigated by systemd unit control. Attack requires env control → already owns the box.
 
-### LOW severity — NOT FIXED
-- Knock duration has no max cap (safe failure mode)
-- `bhcrypt` hex inputs not format-validated (caught by `.catch()`)
-- `bw send` amount accepts `"Infinity"` via `parseFloat`
-- `vms.json` parsed with `as` cast, no runtime type check
-- Config `BigInt(fm.x as number)` could throw on float YAML values
+### LOW severity — FIXED
+- Knock duration: Added `MAX_KNOCK_DURATION_S = 3600` (1 hour) hard cap in `knock.ts`
+- `bhcrypt` hex inputs: Added `requireHex()` validation before all crypto operations
+- `bw send` amount: Changed `isNaN` to `Number.isFinite` check (rejects `Infinity`, `NaN`)
+- `vms.json`: Added runtime shape check (`typeof vms === 'object'`) before `as` cast
+- Config `BigInt()`: Added `safeBigInt()` helper that uses `Math.trunc()` to handle float YAML values
 
 ---
 
@@ -89,8 +89,12 @@ Updated `admin/config.ts`, `fund-manager/config.ts`, and `bw/commands/who.ts` to
 ### Q5: Fund cycle per-step error isolation — FIXED
 Steps 2-5 now each wrapped in individual try/catch. A single step failure no longer skips subsequent steps.
 
-### Q6: `any` types in 8 locations — NOT FIXED
-Requires deeper type investigation per location. Flagged for future work.
+### Q6: `any` types in 8 locations — MOSTLY FIXED
+- `admin/index.ts` ACTION_HANDLERS: replaced `as any` casts with `as unknown as KnockParams/KnockActionConfig`
+- `admin/index.ts` processTransaction: typed `tx` as `TransactionBase<OPNetTransactionTypes>` with targeted intersection cast for `from`
+- `admin/index.ts` processAdminCommands: removed `(block as any).transactions` — `Block.transactions` is already typed
+- `monitor/index.ts` dispatchEvent: typed `event` as `OPNetEvent<ContractDecodedObjectResult>`, replaced `(result as any).properties?.data` with direct typed access
+- `topup.ts`: `as unknown as IFundingTransactionParameters` left as-is — intentional browser null-signer pattern; `window` typing left as-is
 
 ### Q7: bw CLI provider leak — FIXED
 Added `try/finally` in `bw/index.ts main()` to close provider after command execution.
@@ -101,8 +105,8 @@ Both `nonces.ts saveNonces()` and `state.ts saveState()` now use write-to-tmp + 
 ### Q9: No double-signal guard in monitor — FIXED
 Added `shuttingDown` boolean guard. Second signal is ignored.
 
-### Q10: Hardcoded SSH port 22 — NOT FIXED
-`handlers/index.ts:154` — SSH port in encrypted connection details. Low priority.
+### Q10: Hardcoded SSH port 22 — FIXED
+Extracted `SSH_PORT = 22` constant at module scope in `handlers/index.ts`. Used in `encryptConnectionDetails()`.
 
 ---
 
@@ -110,10 +114,13 @@ Added `shuttingDown` boolean guard. Second signal is ignored.
 
 | Category | Total Items | Fixed | Not Fixed |
 |----------|-------------|-------|-----------|
-| Dead Code & Orphans | 12 | 10 | 2 (R5: hexToBytes, R6: executeX separation) |
-| Repetition | 6 | 4 | 2 (R5, R6) |
-| Input Validation | 9 | 3 | 6 (V1 + 5 LOW) |
-| Code Quality | 10 | 8 | 2 (Q6: any types, Q10: SSH port) |
-| **Total** | **37** | **25** | **12** |
+| Dead Code & Orphans | 12 | 11 | 1 (R6: executeX separation) |
+| Repetition | 6 | 5 | 1 (R6) |
+| Input Validation | 9 | 8 | 1 (V1: env var path validation) |
+| Code Quality | 10 | 9.5 | 0.5 (Q6: topup.ts browser-side `any` intentional) |
+| **Total** | **37** | **33.5** | **3.5** |
 
-Items left unfixed are either below-threshold (R5), architectural (R6, Q6), or low-severity with existing mitigations (V1, LOWs, Q10).
+Remaining unfixed items:
+- **R6**: `executeX()` separation — architectural, would change module structure. Not a bug.
+- **V1**: `BLOCKHOST_CONFIG_DIR` env var — mitigated by systemd. Attack requires env control → already owns the box.
+- **Q6 (partial)**: `topup.ts` browser-side null-signer `as unknown as` cast — intentional OPWallet interception pattern.

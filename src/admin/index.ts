@@ -16,22 +16,12 @@
 
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import type { JSONRpcProvider } from 'opnet';
-import type { AdminCommand, AdminConfig, CommandResult, CommandDatabase } from "./types";
+import type { JSONRpcProvider, OPNetTransactionTypes, TransactionBase } from 'opnet';
+import type { AdminCommand, AdminConfig, CommandResult, CommandDatabase, KnockParams, KnockActionConfig } from "./types";
 import { loadCommandDatabase } from "./config";
 import { isNonceUsed, markNonceUsed, pruneOldNonces, loadNonces } from "./nonces";
 import { executeKnock, closeAllKnocks } from "./handlers/knock";
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.startsWith('0x')) hex = hex.slice(2);
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
+import { hexToBytes } from "../crypto";
 
 /**
  * Constant-time comparison of two Uint8Arrays.
@@ -48,7 +38,11 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 // ── Action Handlers ──────────────────────────────────────────────────
 
 const ACTION_HANDLERS: Record<string, (params: Record<string, unknown>, config: Record<string, unknown>, txHash: string) => Promise<CommandResult>> = {
-  knock: async (params, config, txHash) => executeKnock(params as any, config as any, txHash),
+  knock: async (params, config, txHash) => executeKnock(
+    params as unknown as KnockParams,
+    config as unknown as KnockActionConfig,
+    txHash,
+  ),
 };
 
 // ── OP_RETURN Parsing ────────────────────────────────────────────────
@@ -185,8 +179,7 @@ export async function processAdminCommands(
       if (!block) continue;
 
       // Scan transactions for OP_RETURN outputs
-      const txs = (block as any).transactions ?? [];
-      for (const tx of txs) {
+      for (const tx of block.transactions) {
         await processTransaction(tx, adminConfig, commandDb);
       }
     } catch (err) {
@@ -205,16 +198,17 @@ export async function processAdminCommands(
  *   tx.hash — transaction hash (string)
  */
 async function processTransaction(
-  tx: any,
+  tx: TransactionBase<OPNetTransactionTypes>,
   adminConfig: AdminConfig,
   commandDb: CommandDatabase
 ): Promise<void> {
-  // Check sender matches admin wallet (tx.from is an Address object)
-  const sender = (tx.from?.toHex?.() ?? tx.from?.toString() ?? '').toLowerCase();
+  // Check sender matches admin wallet (from is on InteractionTransaction subtype)
+  const txFrom = (tx as TransactionBase<OPNetTransactionTypes> & { from?: { toHex?(): string; toString(): string } }).from;
+  const sender = (txFrom?.toHex?.() ?? txFrom?.toString() ?? '').toLowerCase();
   if (sender !== adminConfig.wallet_address) return;
 
   // Scan outputs for OP_RETURN
-  const outputs = tx.outputs ?? [];
+  const outputs = tx.outputs;
   for (const output of outputs) {
     const scriptHex: string = output.scriptPubKey?.hex ?? '';
 

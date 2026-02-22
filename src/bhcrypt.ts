@@ -49,6 +49,13 @@ function requireFlags(flags: Record<string, string>, ...keys: string[]): void {
     }
 }
 
+function requireHex(value: string, label: string): void {
+    const clean = value.startsWith('0x') ? value.slice(2) : value;
+    if (!/^[0-9a-fA-F]*$/.test(clean) || clean.length === 0 || clean.length % 2 !== 0) {
+        die(`${label}: invalid hex string`);
+    }
+}
+
 function resolveNetwork(name: string) {
     return name === 'mainnet' ? networks.bitcoin :
            name === 'testnet' ? networks.testnet : networks.regtest;
@@ -60,6 +67,7 @@ async function main(): Promise<void> {
     switch (command) {
         case 'encrypt-symmetric': {
             requireFlags(flags, 'signature', 'plaintext');
+            requireHex(flags['signature']!, '--signature');
             const result = symmetricEncrypt(flags['signature']!, flags['plaintext']!);
             process.stdout.write(result + '\n');
             break;
@@ -67,6 +75,8 @@ async function main(): Promise<void> {
 
         case 'decrypt-symmetric': {
             requireFlags(flags, 'signature', 'ciphertext');
+            requireHex(flags['signature']!, '--signature');
+            requireHex(flags['ciphertext']!, '--ciphertext');
             const result = symmetricDecrypt(flags['signature']!, flags['ciphertext']!);
             process.stdout.write(result + '\n');
             break;
@@ -74,7 +84,9 @@ async function main(): Promise<void> {
 
         case 'decrypt': {
             requireFlags(flags, 'private-key-file', 'ciphertext');
+            requireHex(flags['ciphertext']!, '--ciphertext');
             const keyHex = fs.readFileSync(flags['private-key-file']!, 'utf8').trim().replace(/^0x/, '');
+            requireHex(keyHex, 'private key file');
             const result = eciesDecrypt(keyHex, flags['ciphertext']!);
             process.stdout.write(result + '\n');
             break;

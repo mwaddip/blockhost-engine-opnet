@@ -18,7 +18,7 @@ const SERVER_KEY_PATH = '/etc/blockhost/server.key';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function hexToBytes(hex: string): Uint8Array {
+export function hexToBytes(hex: string): Uint8Array {
     if (hex.startsWith('0x')) hex = hex.slice(2);
     const bytes = new Uint8Array(hex.length / 2);
     for (let i = 0; i < bytes.length; i++) {
