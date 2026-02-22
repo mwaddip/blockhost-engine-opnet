@@ -21,13 +21,12 @@ import {
     ReentrancyGuard,
     ReentrancyLevel,
 } from '@btc-vision/btc-runtime/runtime';
+import { TransferHelper } from '@btc-vision/btc-runtime/runtime/shared-libraries/TransferHelper';
 
 const BLOCKS_PER_DAY: u64 = 144; // ~10min Bitcoin blocks
 const MAX_SUBSCRIPTION_DAYS: u256 = u256.fromU64(36500); // ~100 years
 const MAX_PAGE: u32 = 50;
 
-const TRANSFER_FROM_SELECTOR: u32 = encodeSelector('transferFrom(address,address,uint256)');
-const TRANSFER_SELECTOR: u32 = encodeSelector('transfer(address,uint256)');
 const BALANCE_OF_SELECTOR: u32 = encodeSelector('balanceOf(address)');
 
 const paymentTokenPointer: u16 = Blockchain.nextPointer;
@@ -162,7 +161,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
     private readonly subSubscriberMap: StoredMapU256;
     private readonly subExpiresAtMap: StoredMapU256;
     private readonly subCancelledMap: StoredMapU256;
-    private readonly subscriberSubsCache: Map<Address, StoredU256Array> = new Map();
+    private readonly subscriberSubsCache: Map<string, StoredU256Array> = new Map();
 
     public constructor() {
         super();
@@ -322,7 +321,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const balance: u256 = this.queryTokenBalance(tokenAddr, Blockchain.contractAddress);
         if (balance.isZero()) throw new Revert('No balance');
 
-        this.transferToken(tokenAddr, to, balance);
+        TransferHelper.transfer(tokenAddr, to, balance);
 
         return new BytesWriter(0);
     }
@@ -372,7 +371,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const totalCost: u256 = SafeMath.mul(pricePerDay, days);
 
         const tokenAddr: Address = this.getPaymentTokenAddress();
-        this.pullTokens(tokenAddr, Blockchain.tx.sender, totalCost);
+        TransferHelper.transferFrom(tokenAddr, Blockchain.tx.sender, Blockchain.contractAddress, totalCost);
 
         const subscriptionId: u256 = this.nextSubId.value;
         const currentBlock: u256 = u256.fromU64(Blockchain.block.number);
@@ -451,7 +450,7 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         const totalCost: u256 = SafeMath.mul(pricePerDay, days);
 
         const tokenAddr: Address = this.getPaymentTokenAddress();
-        this.pullTokens(tokenAddr, Blockchain.tx.sender, totalCost);
+        TransferHelper.transferFrom(tokenAddr, Blockchain.tx.sender, Blockchain.contractAddress, totalCost);
 
         const durationBlocks: u256 = SafeMath.mul(days, u256.fromU64(BLOCKS_PER_DAY));
         const baseBlock: u256 = currentExpiry > currentBlock ? currentExpiry : currentBlock;
@@ -701,37 +700,6 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         }
     }
 
-    private pullTokens(token: Address, from: Address, amount: u256): void {
-        const writer = new BytesWriter(100);
-        writer.writeSelector(TRANSFER_FROM_SELECTOR);
-        writer.writeAddress(from);
-        writer.writeAddress(Blockchain.contractAddress);
-        writer.writeU256(amount);
-
-        const result = Blockchain.call(token, writer, true);
-
-        if (result.data.byteLength > 0) {
-            if (!result.data.readBoolean()) {
-                throw new Revert('TransferFrom failed');
-            }
-        }
-    }
-
-    private transferToken(token: Address, to: Address, amount: u256): void {
-        const writer = new BytesWriter(68);
-        writer.writeSelector(TRANSFER_SELECTOR);
-        writer.writeAddress(to);
-        writer.writeU256(amount);
-
-        const result = Blockchain.call(token, writer, true);
-
-        if (result.data.byteLength > 0) {
-            if (!result.data.readBoolean()) {
-                throw new Revert('Transfer failed');
-            }
-        }
-    }
-
     private queryTokenBalance(token: Address, account: Address): u256 {
         const writer = new BytesWriter(36);
         writer.writeSelector(BALANCE_OF_SELECTOR);
@@ -741,12 +709,24 @@ export class BlockhostSubscriptions extends ReentrancyGuard {
         return result.data.readU256();
     }
 
+    private addressToKey(addr: Address): string {
+        const HEX: string = '0123456789abcdef';
+        let result: string = '';
+        for (let i: i32 = 0; i < 32; i++) {
+            const b: u8 = unchecked(addr[i]);
+            result += HEX.charAt((b >> 4) & 0xf);
+            result += HEX.charAt(b & 0xf);
+        }
+        return result;
+    }
+
     private getSubscriberSubArray(subscriber: Address): StoredU256Array {
-        if (!this.subscriberSubsCache.has(subscriber)) {
+        const key = this.addressToKey(subscriber);
+        if (!this.subscriberSubsCache.has(key)) {
             const array = new StoredU256Array(subscriberSubsPointer, subscriber.slice(0, 30));
-            this.subscriberSubsCache.set(subscriber, array);
+            this.subscriberSubsCache.set(key, array);
         }
 
-        return this.subscriberSubsCache.get(subscriber);
+        return this.subscriberSubsCache.get(key);
     }
 }

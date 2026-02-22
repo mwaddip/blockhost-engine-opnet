@@ -1,8 +1,8 @@
 /**
- * NFT Reconciliation Module
+ * NFT Ownership Reconciliation Module
  *
- * Periodically checks that local NFT state (vms.json) matches on-chain state.
- * Fixes discrepancies caused by partial failures during VM provisioning.
+ * Periodically checks that local NFT ownership (vms.json) matches on-chain state.
+ * Detects NFT transfers and updates VM GECOS fields accordingly.
  */
 
 import { getContract, type JSONRpcProvider } from "opnet";
@@ -17,7 +17,8 @@ import {
 } from "../fund-manager/contract-abis";
 
 const VMS_JSON_PATH = "/var/lib/blockhost/vms.json";
-const RECONCILE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const RECONCILE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const RPC_THROTTLE_MS = 15_000; // 15s between ownerOf queries
 
 interface VmEntry {
   vm_name: string;
@@ -102,41 +103,6 @@ function saveVmsDatabase(db: VmsDatabase): boolean {
 }
 
 /**
- * Update local state using Python (for consistency with blockhost-provisioner-proxmox)
- */
-function markTokenMintedViaPython(tokenId: number, vmName: string): boolean {
-  const script = `
-import os
-from blockhost.vm_db import get_database
-
-token_id = int(os.environ['TOKEN_ID'])
-vm_name = os.environ['VM_NAME']
-db = get_database()
-db.mark_nft_minted(vm_name, token_id)
-print(f"Marked token {token_id} as minted for {vm_name}")
-`;
-
-  try {
-    const result = spawnSync("python3", ["-c", script], {
-      encoding: "utf8",
-      timeout: 10000,
-      cwd: "/var/lib/blockhost",
-      env: { ...process.env, TOKEN_ID: String(tokenId), VM_NAME: vmName },
-    });
-    if (result.status === 0) {
-      console.log(`[RECONCILE] ${(result.stdout || "").trim()}`);
-      return true;
-    }
-    console.warn(`[RECONCILE] Python update failed, will use direct JSON update`);
-    return false;
-  } catch {
-    // Python module might not be available, fall back to direct JSON update
-    console.warn(`[RECONCILE] Python update failed, will use direct JSON update`);
-    return false;
-  }
-}
-
-/**
  * Call the provisioner's update-gecos command to update a VM's GECOS field.
  * Returns true if the command succeeded (exit 0), false otherwise.
  */
@@ -167,11 +133,18 @@ async function reconcileOwnership(
   nftContract: IAccessCredentialNFT,
   localDb: VmsDatabase,
 ): Promise<void> {
+  let first = true;
   for (const [vmName, vm] of Object.entries(localDb.vms)) {
     // Only check active/suspended VMs with minted NFTs
     if (vm.status === "destroyed") continue;
     if (vm.nft_minted !== true) continue;
     if (vm.nft_token_id === undefined) continue;
+
+    // Throttle RPC calls to avoid rate limiting
+    if (!first) {
+      await new Promise<void>((r) => setTimeout(r, RPC_THROTTLE_MS));
+    }
+    first = false;
 
     let onChainOwner: string;
     try {
@@ -215,7 +188,7 @@ async function reconcileOwnership(
 }
 
 /**
- * Run the NFT reconciliation check
+ * Run the ownership reconciliation check
  */
 export async function runReconciliation(provider: JSONRpcProvider, network: Network): Promise<void> {
   // Concurrency guard
@@ -252,43 +225,6 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
       provider,
       network,
     );
-
-    // Check VMs that are not marked as minted
-    for (const [vmName, vm] of Object.entries(localDb.vms)) {
-      if (vm.status === "destroyed") continue;
-      if (vm.nft_minted === true) continue;
-
-      // Try to find an NFT owned by this VM's wallet
-      try {
-        // If we have a token ID, check that specific token
-        if (vm.nft_token_id !== undefined) {
-          const result = await nftContract.ownerOf(BigInt(vm.nft_token_id));
-          if ('error' in result) continue;
-          // Token exists on-chain, mark as minted locally
-          console.log(`[RECONCILE] Token #${vm.nft_token_id} exists on-chain but not marked minted for ${vmName}`);
-
-          if (!markTokenMintedViaPython(vm.nft_token_id, vmName)) {
-            vm.nft_minted = true;
-            saveVmsDatabase(localDb);
-          }
-
-          // Update GECOS if needed
-          if (vm.gecos_synced !== true) {
-            if (updateGecos(vm.vm_name, vm.owner_wallet, vm.nft_token_id)) {
-              vm.gecos_synced = true;
-              saveVmsDatabase(localDb);
-            }
-          }
-
-          console.log(`[RECONCILE] Reconciled NFT token #${vm.nft_token_id} for ${vmName}`);
-        } else {
-          // No token ID — VM was created but NFT was never minted
-          console.warn(`[RECONCILE] ${vmName} has no NFT token ID and is not marked minted — NFT may not have been minted`);
-        }
-      } catch {
-        // Token doesn't exist on-chain or query failed — skip
-      }
-    }
 
     // Reconcile NFT ownership transfers and retry failed GECOS updates
     await reconcileOwnership(nftContract, localDb);

@@ -58,7 +58,7 @@ export class AccessCredentialNFT extends OP_NET {
     private readonly tokenIndexMap: StoredMapU256;
     private readonly approvalMap: StoredMapU256;
     private readonly approvalForAllMap: StoredMapU256;
-    private readonly ownerTokensMap: Map<Address, StoredU256Array> = new Map();
+    private readonly ownerTokensMap: Map<string, StoredU256Array> = new Map();
 
     public constructor() {
         super();
@@ -104,11 +104,11 @@ export class AccessCredentialNFT extends OP_NET {
         // Set owner
         this.ownerOfMap.set(tokenId, u256.fromUint8ArrayBE(to));
 
-        // Add to enumeration
+        // Add to enumeration (1-based index: 0 = not found)
         const tokenArray = this.getOwnerTokenArray(to);
         const newIndex = tokenArray.getLength();
         tokenArray.push(tokenId);
-        this.tokenIndexMap.set(tokenId, u256.fromU32(newIndex));
+        this.tokenIndexMap.set(tokenId, u256.fromU32(newIndex + 1));
         tokenArray.save();
 
         // Update balance
@@ -389,10 +389,13 @@ export class AccessCredentialNFT extends OP_NET {
     }
 
     private approvalForAllKey(owner: Address, operator: Address): u256 {
-        const combined = new Uint8Array(64);
+        const combined = new Uint8Array(65); // 32 + 1 separator + 32
         for (let i: i32 = 0; i < 32; i++) {
             combined[i] = owner[i];
-            combined[i + 32] = operator[i];
+        }
+        combined[32] = 0xff; // domain separator
+        for (let i: i32 = 0; i < 32; i++) {
+            combined[i + 33] = operator[i];
         }
         return u256.fromBytes(Blockchain.sha256(combined));
     }
@@ -404,11 +407,11 @@ export class AccessCredentialNFT extends OP_NET {
         // Remove from sender enumeration
         this.removeTokenFromEnumeration(from, tokenId);
 
-        // Add to recipient enumeration
+        // Add to recipient enumeration (1-based index: 0 = not found)
         const toArray = this.getOwnerTokenArray(to);
         const newIndex = toArray.getLength();
         toArray.push(tokenId);
-        this.tokenIndexMap.set(tokenId, u256.fromU32(newIndex));
+        this.tokenIndexMap.set(tokenId, u256.fromU32(newIndex + 1));
         toArray.save();
 
         // Update owner
@@ -429,14 +432,15 @@ export class AccessCredentialNFT extends OP_NET {
     private removeTokenFromEnumeration(owner: Address, tokenId: u256): void {
         const tokenArray = this.getOwnerTokenArray(owner);
         const length = tokenArray.getLength();
-        const indexU256: u256 = this.tokenIndexMap.get(tokenId);
-        const index: u32 = indexU256.toU32();
+        const storedIndex: u256 = this.tokenIndexMap.get(tokenId);
+        if (storedIndex.isZero()) throw new Revert('Token not in enumeration');
+        const index: u32 = storedIndex.toU32() - 1; // convert 1-based to 0-based
 
         // Swap with last element if not already last
         if (index < length - 1) {
             const lastTokenId: u256 = tokenArray.get(length - 1);
             tokenArray.set(index, lastTokenId);
-            this.tokenIndexMap.set(lastTokenId, u256.fromU32(index));
+            this.tokenIndexMap.set(lastTokenId, u256.fromU32(index + 1)); // 1-based
         }
 
         tokenArray.deleteLast();
@@ -445,12 +449,24 @@ export class AccessCredentialNFT extends OP_NET {
         this.tokenIndexMap.set(tokenId, u256.Zero);
     }
 
+    private addressToKey(addr: Address): string {
+        const HEX: string = '0123456789abcdef';
+        let result: string = '';
+        for (let i: i32 = 0; i < 32; i++) {
+            const b: u8 = unchecked(addr[i]);
+            result += HEX.charAt((b >> 4) & 0xf);
+            result += HEX.charAt(b & 0xf);
+        }
+        return result;
+    }
+
     private getOwnerTokenArray(owner: Address): StoredU256Array {
-        if (!this.ownerTokensMap.has(owner)) {
+        const key = this.addressToKey(owner);
+        if (!this.ownerTokensMap.has(key)) {
             const array = new StoredU256Array(ownerTokensMapPointer, owner.slice(0, 30));
-            this.ownerTokensMap.set(owner, array);
+            this.ownerTokensMap.set(key, array);
         }
 
-        return this.ownerTokensMap.get(owner);
+        return this.ownerTokensMap.get(key);
     }
 }
