@@ -190,7 +190,7 @@ async function main() {
   console.log("----------------------------------------------\n");
 
   // Connect to the network
-  const provider = new JSONRpcProvider(rpcUrl, network);
+  const provider = new JSONRpcProvider({ url: rpcUrl, network });
   const contract = getContract<IBlockhostSubscriptions>(
     contractAddress,
     BLOCKHOST_SUBSCRIPTIONS_ABI,

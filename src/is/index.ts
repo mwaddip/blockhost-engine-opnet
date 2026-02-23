@@ -64,7 +64,7 @@ async function main(): Promise<void> {
             process.exit(1);
         }
         const { rpcUrl, network } = loadRpcConfig();
-        const provider = new JSONRpcProvider(rpcUrl, network);
+        const provider = new JSONRpcProvider({ url: rpcUrl, network });
         try {
             const info = await provider.getPublicKeyInfo(other[0], true);
             await provider.close();
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
 
     if (walletAddr && nftId) {
         const { nftContract, rpcUrl, network } = loadWeb3Config();
-        const provider = new JSONRpcProvider(rpcUrl, network);
+        const provider = new JSONRpcProvider({ url: rpcUrl, network });
         const contract = getContract<IAccessCredentialNFT>(
             nftContract,
             ACCESS_CREDENTIAL_NFT_ABI,

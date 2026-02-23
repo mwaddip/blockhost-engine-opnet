@@ -78,7 +78,7 @@ export async function setCommand(
         process.exit(1);
     }
 
-    const provider = new JSONRpcProvider(rpcUrl, network);
+    const provider = new JSONRpcProvider({ url: rpcUrl, network });
     const nftContract = getContract<IAccessCredentialNFT>(
         nftContractAddress,
         ACCESS_CREDENTIAL_NFT_ABI,

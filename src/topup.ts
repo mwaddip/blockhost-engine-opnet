@@ -39,7 +39,7 @@ export async function sendBTC(
     if (!opnet) throw new Error('OPWallet not detected');
 
     const network = resolveNetwork(networkName);
-    const provider = new JSONRpcProvider(rpcUrl, network);
+    const provider = new JSONRpcProvider({ url: rpcUrl, network });
     const factory = new TransactionFactory();
 
     try {

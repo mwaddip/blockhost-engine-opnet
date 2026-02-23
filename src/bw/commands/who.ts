@@ -87,7 +87,7 @@ export async function whoCommand(args: string[]): Promise<void> {
     }
 
     const { nftContract, rpcUrl, network } = loadWeb3Config();
-    const provider = new JSONRpcProvider(rpcUrl, network);
+    const provider = new JSONRpcProvider({ url: rpcUrl, network });
     const contract = getContract<IAccessCredentialNFT>(
         nftContract,
         ACCESS_CREDENTIAL_NFT_ABI,
