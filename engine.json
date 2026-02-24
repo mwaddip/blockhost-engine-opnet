@@ -12,7 +12,7 @@
     "session_key": "blockchain"
   },
   "constraints": {
-    "address_pattern": "^(0x[0-9a-fA-F]{64}|(bc|tb|bcrt)1[a-z0-9]{8,87})$",
+    "address_pattern": "^(0x[0-9a-fA-F]{64}|(bc|tb|bcrt|op|opt|opr)1[a-z0-9]{8,87})$",
     "native_token": "btc",
     "native_token_label": "BTC",
     "token_pattern": "^0x[0-9a-fA-F]{64}$",

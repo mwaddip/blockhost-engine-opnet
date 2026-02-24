@@ -75,7 +75,8 @@ def _rpc_url(base_url: str) -> str:
 INTERNAL_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 # Bitcoin bech32/bech32m addresses: bc1 (mainnet), tb1 (testnet), bcrt1 (regtest)
-BECH32_ADDRESS_RE = re.compile(r"^(bc|tb|bcrt)1[a-z0-9]{8,87}$")
+# OPNet P2OP addresses: op1 (mainnet), opt1 (testnet), opr1 (regtest)
+BECH32_ADDRESS_RE = re.compile(r"^(bc|tb|bcrt|op|opt|opr)1[a-z0-9]{8,87}$")
 
 # Async deploy jobs (module-level, shared across requests)
 _deploy_jobs: dict = {}
