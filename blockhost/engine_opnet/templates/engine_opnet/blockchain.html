@@ -207,24 +207,27 @@
                 </div>
             </div>
 
-            <!-- Payment token (required — used as constructor param and for plan pricing) -->
-            <div class="form-group" style="margin-top: 1rem;">
-                <label for="payment_token">Payment Token Address <span style="color: var(--danger, #dc3545);">*</span></label>
-                <input type="text" id="payment_token" name="payment_token"
-                       value="{{ blockchain.get('payment_token', '') or network_payment_token.get(blockchain.get('network', 'regtest'), '') }}"
-                       {% if not blockchain.get('payment_token', '') %}data-was-default="true"{% endif %}
-                       placeholder="0x... (64 hex chars)" required>
-                <p class="text-muted mt-1" style="font-size: 0.75rem;">
-                    OP_20 stablecoin token address used for subscription payments. Required for contract deployment.
-                </p>
-            </div>
-
             <!-- Deploy status (shown during deployment) -->
             <div id="deploy-status" class="hidden" style="margin-top: 1rem;">
                 <div class="status-indicator loading">
                     <div class="spinner"></div>
                     <span id="deploy-status-text">Deploying contracts...</span>
                 </div>
+            </div>
+        </div>
+
+        <!-- Payment token (outside contract-section so it's always visible) -->
+        <div class="form-section">
+            <h3>Payment Token</h3>
+            <div class="form-group">
+                <label for="payment_token">Payment Token Address <span style="color: var(--danger, #dc3545);">*</span></label>
+                <input type="text" id="payment_token" name="payment_token"
+                       value="{{ blockchain.get('payment_token', '') or network_payment_token.get(blockchain.get('network', 'regtest'), '') }}"
+                       {% if not blockchain.get('payment_token', '') %}data-was-default="true"{% endif %}
+                       placeholder="0x... (64 hex chars)" required>
+                <p class="text-muted mt-1" style="font-size: 0.75rem;">
+                    OP_20 stablecoin contract address for subscription payments (e.g. BHTT on regtest).
+                </p>
             </div>
         </div>
 
