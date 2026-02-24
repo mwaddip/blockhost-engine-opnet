@@ -319,6 +319,11 @@ cp "$WIZARD_SRC/templates/engine_opnet/"*.html "$WIZARD_DST/templates/engine_opn
 # Install engine manifest
 cp "$PROJECT_DIR/engine.json" "$PKG_DIR/usr/share/blockhost/engine.json"
 
+# Install first-boot hook
+mkdir -p "$PKG_DIR/usr/share/blockhost/engine-hooks"
+cp "$PROJECT_DIR/scripts/first-boot-hook.sh" "$PKG_DIR/usr/share/blockhost/engine-hooks/first-boot.sh"
+chmod 755 "$PKG_DIR/usr/share/blockhost/engine-hooks/first-boot.sh"
+
 # Static resources
 cp "$PROJECT_DIR/scripts/signup-template.html" "$PKG_DIR/usr/share/blockhost/"
 

@@ -13,7 +13,7 @@ declare const window: Record<string, unknown>;
 
 function resolveNetwork(name: string) {
     return name === 'mainnet' ? networks.bitcoin :
-           name === 'testnet' ? networks.testnet : networks.regtest;
+           name === 'testnet' ? networks.opnetTestnet : networks.regtest;
 }
 
 export interface TopUpResult {

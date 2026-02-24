@@ -58,7 +58,7 @@ function requireHex(value: string, label: string): void {
 
 function resolveNetwork(name: string) {
     return name === 'mainnet' ? networks.bitcoin :
-           name === 'testnet' ? networks.testnet : networks.regtest;
+           name === 'testnet' ? networks.opnetTestnet : networks.regtest;
 }
 
 const { command, flags } = parseArgs(process.argv.slice(2));

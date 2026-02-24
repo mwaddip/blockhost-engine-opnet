@@ -174,7 +174,7 @@ async function main() {
   console.log("==============================================");
   console.log(`Contract: ${contractAddress}`);
   console.log(`RPC: ${rpcUrl}`);
-  console.log(`Network: ${network === networks.bitcoin ? 'mainnet' : network === networks.testnet ? 'testnet' : 'regtest'}`);
+  console.log(`Network: ${network === networks.bitcoin ? 'mainnet' : network === networks.opnetTestnet ? 'testnet' : 'regtest'}`);
   console.log(`Poll Interval: ${POLL_INTERVAL_MS}ms`);
   console.log("----------------------------------------------\n");
 
