@@ -285,6 +285,39 @@ cp "$PROJECT_DIR/scripts/generate-signup-page" "$PKG_DIR/usr/bin/blockhost-gener
 cp "$PROJECT_DIR/scripts/deploy-contracts" "$PKG_DIR/usr/bin/blockhost-deploy-contracts"
 chmod 755 "$PKG_DIR/usr/bin/"*
 
+# Bundle deploy scripts with esbuild
+echo "Bundling deploy scripts with esbuild..."
+DEPLOY_DIR="$PROJECT_DIR/contracts/deploy"
+
+# Install deploy script dependencies (separate package.json)
+(cd "$DEPLOY_DIR" && npm install --silent)
+
+npx esbuild "$DEPLOY_DIR/deploy-nft.ts" \
+    --bundle \
+    --platform=node \
+    --target=node22 \
+    --format=esm \
+    --minify \
+    --banner:js='import{createRequire}from"module";const require=createRequire(import.meta.url);' \
+    --outfile="$PKG_DIR/usr/share/blockhost/deploy-nft.js"
+
+npx esbuild "$DEPLOY_DIR/deploy-subscriptions.ts" \
+    --bundle \
+    --platform=node \
+    --target=node22 \
+    --format=esm \
+    --minify \
+    --banner:js='import{createRequire}from"module";const require=createRequire(import.meta.url);' \
+    --outfile="$PKG_DIR/usr/share/blockhost/deploy-subscriptions.js"
+
+for f in deploy-nft.js deploy-subscriptions.js; do
+    if [ -f "$PKG_DIR/usr/share/blockhost/$f" ]; then
+        echo "  $f ($(du -h "$PKG_DIR/usr/share/blockhost/$f" | cut -f1))"
+    else
+        echo "  WARNING: Failed to bundle $f"
+    fi
+done
+
 # Create blockhost-mint-nft CLI wrapper (TypeScript, bundled via esbuild)
 echo "Bundling mint_nft CLI with esbuild..."
 npx esbuild "$PROJECT_DIR/scripts/mint_nft" \

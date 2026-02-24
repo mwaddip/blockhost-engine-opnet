@@ -23,6 +23,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_DIR="${BLOCKHOST_CONFIG_DIR:-/etc/blockhost}"
+SHARE_DIR="/usr/share/blockhost"
 
 MODE="${1:-both}"
 
@@ -67,10 +68,32 @@ print(rpc)
     fi
 fi
 
+# Run a deploy script: bundled JS if installed, npx tsx for dev
+run_deploy() {
+    local name="$1"    # e.g. deploy-nft
+    local ts_path="$ENGINE_DIR/contracts/deploy/${name}.ts"
+    local js_path="$SHARE_DIR/${name}.js"
+
+    if [ -f "$js_path" ]; then
+        node "$js_path" 2>&1
+    elif [ -f "$ts_path" ]; then
+        npx tsx "$ts_path" 2>&1
+    else
+        echo "Error: neither $js_path nor $ts_path found" >&2
+        return 1
+    fi
+}
+
 deploy_nft() {
     echo "Deploying NFT contract..." >&2
+
+    # Tell the deploy script where to find WASM
+    if [ -f "$SHARE_DIR/contracts/AccessCredentialNFT.wasm" ]; then
+        export BLOCKHOST_WASM_NFT="$SHARE_DIR/contracts/AccessCredentialNFT.wasm"
+    fi
+
     local output
-    output=$(npx tsx "$ENGINE_DIR/contracts/deploy/deploy-nft.ts" 2>&1) || {
+    output=$(run_deploy deploy-nft) || {
         echo "Error: NFT deployment failed" >&2
         echo "$output" >&2
         return 1
@@ -96,9 +119,14 @@ deploy_subscription() {
     fi
     export OPNET_PAYMENT_TOKEN
 
+    # Tell the deploy script where to find WASM
+    if [ -f "$SHARE_DIR/contracts/BlockhostSubscriptions.wasm" ]; then
+        export BLOCKHOST_WASM_SUBS="$SHARE_DIR/contracts/BlockhostSubscriptions.wasm"
+    fi
+
     echo "Deploying subscription contract..." >&2
     local output
-    output=$(npx tsx "$ENGINE_DIR/contracts/deploy/deploy-subscriptions.ts" 2>&1) || {
+    output=$(run_deploy deploy-subscriptions) || {
         echo "Error: subscription deployment failed" >&2
         echo "$output" >&2
         return 1

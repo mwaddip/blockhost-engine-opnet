@@ -14,7 +14,7 @@ const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://regtest.opnet.org';
 const network = RPC_URL.includes('mainnet')
     ? networks.bitcoin
     : RPC_URL.includes('testnet')
-      ? networks.testnet
+      ? networks.opnetTestnet
       : networks.regtest;
 
 const MNEMONIC = process.env.OPNET_MNEMONIC;
@@ -30,7 +30,7 @@ if (!PAYMENT_TOKEN) {
 }
 
 async function main(): Promise<void> {
-    const provider = new JSONRpcProvider(RPC_URL, network);
+    const provider = new JSONRpcProvider({ url: RPC_URL, network });
 
     const mnemonic = new Mnemonic(
         MNEMONIC,
@@ -56,10 +56,11 @@ async function main(): Promise<void> {
     const paymentTokenAddr = await provider.getPublicKeyInfo(PAYMENT_TOKEN, true);
     console.log('Payment token internal address:', paymentTokenAddr.toHex());
 
-    // Read WASM bytecode
-    const bytecode = readFileSync(
-        new URL('../blockhost-subscriptions/build/BlockhostSubscriptions.wasm', import.meta.url),
-    );
+    // Read WASM bytecode (env var set by deploy-contracts wrapper, fallback for dev)
+    const wasmPath = process.env.BLOCKHOST_WASM_SUBS;
+    const bytecode = wasmPath
+        ? readFileSync(wasmPath)
+        : readFileSync(new URL('../blockhost-subscriptions/build/BlockhostSubscriptions.wasm', import.meta.url));
     console.log('Bytecode size:', bytecode.length, 'bytes');
 
     // Constructor calldata: paymentToken (address = 32 bytes)
