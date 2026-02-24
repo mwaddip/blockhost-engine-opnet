@@ -409,6 +409,8 @@ def api_deploy():
 
     if not deployer_mnemonic or not rpc_url:
         return jsonify({"error": "deployer_mnemonic and rpc_url required"}), 400
+    if not payment_token:
+        return jsonify({"error": "payment_token required for subscription contract deployment"}), 400
 
     job_id = f"deploy-{secrets.token_hex(4)}"
     _deploy_jobs[job_id] = {
@@ -890,6 +892,12 @@ def finalize_contracts(config: dict) -> tuple[bool, Optional[str]]:
                 return False, "Deployer mnemonic not available"
 
         payment_token = blockchain.get("payment_token", "")
+        if not payment_token:
+            return False, (
+                "Payment token address required for contract deployment. "
+                "Go back to the blockchain step and enter the OP_20 "
+                "stablecoin address."
+            )
 
         env = {
             **os.environ,

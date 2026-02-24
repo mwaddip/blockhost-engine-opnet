@@ -206,14 +206,14 @@
                 </div>
             </div>
 
-            <!-- Payment token (needed for both deploy and existing modes) -->
+            <!-- Payment token (required — used as constructor param and for plan pricing) -->
             <div class="form-group" style="margin-top: 1rem;">
-                <label for="payment_token">Payment Token Address</label>
+                <label for="payment_token">Payment Token Address <span style="color: var(--danger, #dc3545);">*</span></label>
                 <input type="text" id="payment_token" name="payment_token"
                        value="{{ blockchain.get('payment_token', '') }}"
-                       placeholder="0x... (64 hex chars)">
+                       placeholder="0x... (64 hex chars)" required>
                 <p class="text-muted mt-1" style="font-size: 0.75rem;">
-                    OP_20 stablecoin token address used for subscription payments.
+                    OP_20 stablecoin token address used for subscription payments. Required for contract deployment.
                 </p>
             </div>
 
