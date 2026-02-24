@@ -1,0 +1,32 @@
+# /etc/blockhost/web3-defaults.yaml (OPNet Testnet)
+#
+# All blockchain contract addresses and RPC configuration.
+# Written by the installer wizard, read by every engine component.
+# All addresses are 0x-prefixed 32-byte hex (OPNet internal format).
+#
+# OPNet Testnet is a Signet fork (NOT Bitcoin Testnet4).
+# Faucet: https://faucet.opnet.org
+# Explorer: https://mempool.opnet.org/testnet4/tx/
+# Wallet: https://github.com/btc-vision/opwallet/releases/tag/v1.8.1-rc.2
+
+blockchain:
+  rpc_url: "https://testnet.opnet.org"
+  nft_contract: "DEPLOY_YOUR_OWN"
+  subscriptions_contract: "DEPLOY_YOUR_OWN"
+  payment_token: "0xfd4473840751d58d9f8b73bdd57d6c5260453d5518bd7cd02d0a4cf3df9bf4dd"
+
+# MotoSwap AMM — OP20-to-OP20 token swaps.
+motoswap:
+  router: "0x0e6ff1f2d7db7556cb37729e3738f4dae82659b984b2621fab08e1111b1b937a"
+  factory: "0xa02aa5ca4c307107484d5fb690d811df1cf526f8de204d24528653dcae369a0f"
+
+# NativeSwap — BTC-to-OP20 swaps (two-phase commit).
+# Not yet deployed on testnet.
+# native_swap: "0x..."
+
+# ─── Reference: OPNet Testnet Core Contracts ───
+# MOTO token:      0xfd4473840751d58d9f8b73bdd57d6c5260453d5518bd7cd02d0a4cf3df9bf4dd
+# PILL token:      0xb09fc29c112af8293539477e23d8df1d3126639642767d707277131352040cbb
+# OP20 Deployer:   0xe671a73b24456a34cbf9c7e8b17cb850f67399c062d6984fb3205c686cf75f84
+# MotoChef Factory:0x5a7ca2695ae71504eec58f075e5b8888000118a07d6fe51e59f9e3821002fc23
+# Staking:         0x831ca1f8ebcc1925be9aa3a22fd3c5c4bf7d03a86c66c39194fef698acb886ae
