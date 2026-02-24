@@ -53,6 +53,13 @@ NETWORK_RPC = {
     "mainnet": "https://mainnet.opnet.org",
 }
 
+# Default payment tokens per network (BHTT on regtest, MOTO on testnet)
+NETWORK_PAYMENT_TOKEN = {
+    "regtest": "0x556cf2a9f6a3335d616d61ba9cf046e63ab855cdfce514105d60c3aed103eb9a",
+    "testnet": "0xfd4473840751d58d9f8b73bdd57d6c5260453d5518bd7cd02d0a4cf3df9bf4dd",
+    "mainnet": "",
+}
+
 CONFIG_DIR = Path("/etc/blockhost")
 
 # OPNet JSON-RPC path (appended to base URL for direct HTTP calls)
@@ -120,7 +127,8 @@ def wizard_opnet():
             "subscription_contract": request.form.get(
                 "subscription_contract", ""
             ).strip(),
-            "payment_token": request.form.get("payment_token", "").strip(),
+            "payment_token": request.form.get("payment_token", "").strip()
+                or NETWORK_PAYMENT_TOKEN.get(network, ""),
             "plan_name": request.form.get("plan_name", "Basic VM").strip(),
             "plan_price_cents": int(request.form.get("plan_price_cents", 50)),
             "revenue_share_enabled": request.form.get("revenue_share_enabled") == "on",
@@ -146,6 +154,7 @@ def wizard_opnet():
         "engine_opnet/blockchain.html",
         network_names=NETWORK_NAMES,
         network_rpc=NETWORK_RPC,
+        network_payment_token=NETWORK_PAYMENT_TOKEN,
         blockchain=session.get("blockchain", {}),
     )
 

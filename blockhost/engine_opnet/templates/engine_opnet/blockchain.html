@@ -16,10 +16,11 @@
             <h3>Network Selection</h3>
             <div class="form-group">
                 <label for="network">OPNet Network</label>
-                <select id="network" name="network" onchange="updateRpcEndpoint()">
+                <select id="network" name="network" onchange="updateNetworkDefaults()">
                     {% for nid, nname in network_names.items() %}
                     <option value="{{ nid }}"
                             data-rpc="{{ network_rpc.get(nid, '') }}"
+                            data-payment-token="{{ network_payment_token.get(nid, '') }}"
                             {% if blockchain.get('network', 'regtest') == nid %}selected{% endif %}>
                         {{ nname }}
                     </option>
@@ -210,7 +211,8 @@
             <div class="form-group" style="margin-top: 1rem;">
                 <label for="payment_token">Payment Token Address <span style="color: var(--danger, #dc3545);">*</span></label>
                 <input type="text" id="payment_token" name="payment_token"
-                       value="{{ blockchain.get('payment_token', '') }}"
+                       value="{{ blockchain.get('payment_token', '') or network_payment_token.get(blockchain.get('network', 'regtest'), '') }}"
+                       {% if not blockchain.get('payment_token', '') %}data-was-default="true"{% endif %}
                        placeholder="0x... (64 hex chars)" required>
                 <p class="text-muted mt-1" style="font-size: 0.75rem;">
                     OP_20 stablecoin token address used for subscription payments. Required for contract deployment.
@@ -355,16 +357,24 @@ function selectRadio(element) {
     updateContinueButton();
 }
 
-// Update RPC endpoint when network changes
-function updateRpcEndpoint() {
+// Update RPC endpoint and payment token when network changes
+function updateNetworkDefaults() {
     var select = document.getElementById('network');
     var option = select.options[select.selectedIndex];
     var rpcInput = document.getElementById('rpc_url');
+    var tokenInput = document.getElementById('payment_token');
 
     if (option.value !== 'custom' && option.dataset.rpc) {
         rpcInput.value = option.dataset.rpc;
     }
+    // Auto-fill payment token if the field is empty or still holds a previous default
+    if (option.dataset.paymentToken && (!tokenInput.value || tokenInput.dataset.wasDefault === 'true')) {
+        tokenInput.value = option.dataset.paymentToken;
+        tokenInput.dataset.wasDefault = 'true';
+    }
 }
+// Compat alias
+function updateRpcEndpoint() { updateNetworkDefaults(); }
 
 // Generate new wallet
 function generateWallet() {
