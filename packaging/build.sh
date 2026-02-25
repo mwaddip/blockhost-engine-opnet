@@ -345,9 +345,11 @@ fi
 WIZARD_SRC="$PROJECT_DIR/blockhost/engine_opnet"
 WIZARD_DST="$PKG_DIR/usr/lib/python3/dist-packages/blockhost/engine_opnet"
 mkdir -p "$WIZARD_DST/templates/engine_opnet"
+mkdir -p "$WIZARD_DST/static"
 cp "$WIZARD_SRC/__init__.py" "$WIZARD_DST/"
 cp "$WIZARD_SRC/wizard.py" "$WIZARD_DST/"
 cp "$WIZARD_SRC/templates/engine_opnet/"*.html "$WIZARD_DST/templates/engine_opnet/"
+cp "$WIZARD_SRC/static/"* "$WIZARD_DST/static/"
 
 # Install engine manifest
 cp "$PROJECT_DIR/engine.json" "$PKG_DIR/usr/share/blockhost/engine.json"
