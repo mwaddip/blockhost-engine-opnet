@@ -545,60 +545,55 @@
         return NETWORKS.regtest;
     }
 
-    // Minimal bech32m re-encoder — converts OPNet bech32Opnet addresses (opt1p/opr1p/op1p)
-    // to standard bech32 (tb1p/bcrt1p/bc1p) so the opnet SDK's address validation passes.
-    // The SDK only validates P2TR against network.bech32, not bech32Opnet.
-    var BECH32M_CONST = 0x2bc830a3;
+    // Bech32m decoder — extracts the 32-byte witness program from a bech32m P2TR address
+    // and returns it as an 0x-prefixed hex string (the OPNet internal address format).
+    // Needed because the opnet SDK's AddressVerificator rejects bech32Opnet prefixes
+    // (opt/opr/op) for P2TR, and the RPC only indexes addresses by internal hex format.
     var BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
     var BECH32_REV = {};
     for (var _ci = 0; _ci < 32; _ci++) BECH32_REV[BECH32_CHARSET.charAt(_ci)] = _ci;
 
-    function _polymod(values) {
-        var GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-        var chk = 1;
-        for (var i = 0; i < values.length; i++) {
-            var b = chk >>> 25;
-            chk = ((chk & 0x1ffffff) << 5) ^ values[i];
-            for (var g = 0; g < 5; g++) { if ((b >>> g) & 1) chk ^= GEN[g]; }
+    // Convert between bit widths (BIP-173 convertbits)
+    function _convertBits(data, fromBits, toBits, pad) {
+        var acc = 0, bits = 0, ret = [], maxv = (1 << toBits) - 1;
+        for (var i = 0; i < data.length; i++) {
+            acc = (acc << fromBits) | data[i];
+            bits += fromBits;
+            while (bits >= toBits) { bits -= toBits; ret.push((acc >>> bits) & maxv); }
         }
-        return chk;
+        if (pad && bits > 0) ret.push((acc << (toBits - bits)) & maxv);
+        return ret;
     }
 
-    function _hrpExpand(hrp) {
-        var r = [];
-        for (var i = 0; i < hrp.length; i++) r.push(hrp.charCodeAt(i) >>> 5);
-        r.push(0);
-        for (var j = 0; j < hrp.length; j++) r.push(hrp.charCodeAt(j) & 31);
-        return r;
-    }
-
-    // Re-encode a bech32m address with a different HRP (recalculates checksum)
-    function reEncodeBech32m(addr, newHrp) {
+    // Decode a bech32m address to its witness program as 0x hex.
+    // Returns null if the address isn't a valid P2TR (version 1, 32-byte program).
+    function bech32mToHex(addr) {
         var pos = addr.lastIndexOf('1');
         if (pos < 1) return null;
         var dataPart = addr.slice(pos + 1).toLowerCase();
-        var dataValues = [];
+        var values5 = [];
         for (var i = 0; i < dataPart.length - 6; i++) {
             var v = BECH32_REV[dataPart.charAt(i)];
             if (v === undefined) return null;
-            dataValues.push(v);
+            values5.push(v);
         }
-        var expanded = _hrpExpand(newHrp).concat(dataValues).concat([0, 0, 0, 0, 0, 0]);
-        var mod = _polymod(expanded) ^ BECH32M_CONST;
-        var result = newHrp + '1';
-        for (var j = 0; j < dataValues.length; j++) result += BECH32_CHARSET.charAt(dataValues[j]);
-        for (var k = 0; k < 6; k++) result += BECH32_CHARSET.charAt((mod >>> (5 * (5 - k))) & 31);
-        return result;
+        // First 5-bit value is witness version
+        var version = values5[0];
+        if (version !== 1) return null; // Only handle P2TR (version 1)
+        // Convert remaining 5-bit values to 8-bit bytes
+        var programBytes = _convertBits(values5.slice(1), 5, 8, false);
+        if (programBytes.length !== 32) return null;
+        return '0x' + programBytes.map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
     }
 
-    // Normalize an OPNet bech32Opnet address to its standard bech32 equivalent.
-    // OPWallet may return opt1p.../opr1p.../op1p... but the SDK validates P2TR
-    // against network.bech32 (tb/bcrt/bc) only. Re-encode to pass validation.
+    // Normalize an OPNet wallet address for SDK consumption.
+    // OPWallet returns bech32Opnet addresses (opt1p/opr1p/op1p) which the SDK rejects.
+    // Decode to the 0x internal hex format (the 32-byte tweaked pubkey from the witness program).
     function normalizeWalletAddress(addr, network) {
         if (!addr || !network.bech32Opnet) return addr;
         var lower = addr.toLowerCase();
         if (lower.startsWith(network.bech32Opnet + '1')) {
-            return reEncodeBech32m(addr, network.bech32) || addr;
+            return bech32mToHex(addr) || addr;
         }
         return addr;
     }
@@ -654,9 +649,9 @@
             var provider = getProvider(rpcUrl);
             return getContract(contractAddress, NFT_ABI, provider, provider.network, sender);
         },
-        // Resolve a Bitcoin address or contract hex to an OPNet Address object via RPC.
-        // Normalizes bech32Opnet addresses (opt1p/opr1p/op1p) to standard bech32 (tb1p/bcrt1p/bc1p)
-        // because the SDK only validates P2TR against network.bech32, not bech32Opnet.
+        // Resolve a wallet address or contract hex to an OPNet Address object via RPC.
+        // Decodes bech32Opnet addresses (opt1p/opr1p/op1p) to 0x internal hex format
+        // because the SDK rejects bech32Opnet prefixes and the RPC indexes by hex.
         resolveAddress: async function(rpcUrl, address, isContract) {
             var provider = getProvider(rpcUrl);
             var normalized = normalizeWalletAddress(address, provider.network);
