@@ -5,7 +5,7 @@
  * dev and broker are optional — the keyfile (last arg, not an address) marks the end.
  * Fails if addressbook already has entries (safety — only for fresh bootstrap).
  *
- * Addresses must be 0x-prefixed 32-byte internal addresses.
+ * Addresses: 0x internal (32-byte hex) or bech32m P2TR/P2OP — auto-normalized.
  *
  * Arg counts:
  *   3: admin, server, keyfile
@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import {
     loadAddressbook,
     saveAddressbook,
-    isValidInternalAddress,
+    normalizeAddress,
 } from '../../fund-manager/addressbook.js';
 import type { Addressbook } from '../../fund-manager/types.js';
 
@@ -28,6 +28,9 @@ export async function initCommand(args: string[]): Promise<void> {
         );
         console.error(
             '  dev and broker are optional; keyfile is always last',
+        );
+        console.error(
+            '  addresses: 0x internal or bech32m (P2TR/P2OP)',
         );
         process.exit(1);
     }
@@ -47,29 +50,29 @@ export async function initCommand(args: string[]): Promise<void> {
         process.exit(1);
     }
 
-    const adminAddr = addresses[0];
-    const serverAddr = addresses[1];
-    const devAddr = addresses.length >= 3 ? addresses[2] : null;
-    const brokerAddr = addresses.length >= 4 ? addresses[3] : null;
+    const adminAddr = normalizeAddress(addresses[0] ?? '');
+    const serverAddr = normalizeAddress(addresses[1] ?? '');
+    const devAddr = addresses.length >= 3 ? normalizeAddress(addresses[2]!) : null;
+    const brokerAddr = addresses.length >= 4 ? normalizeAddress(addresses[3]!) : null;
 
-    if (!adminAddr || !isValidInternalAddress(adminAddr)) {
+    if (!adminAddr) {
         console.error(
-            `Error: invalid admin address: ${adminAddr ?? '(missing)'}`,
+            `Error: invalid admin address: ${addresses[0] ?? '(missing)'}`,
         );
         process.exit(1);
     }
-    if (!serverAddr || !isValidInternalAddress(serverAddr)) {
+    if (!serverAddr) {
         console.error(
-            `Error: invalid server address: ${serverAddr ?? '(missing)'}`,
+            `Error: invalid server address: ${addresses[1] ?? '(missing)'}`,
         );
         process.exit(1);
     }
-    if (devAddr && !isValidInternalAddress(devAddr)) {
-        console.error(`Error: invalid dev address: ${devAddr}`);
+    if (addresses.length >= 3 && !devAddr) {
+        console.error(`Error: invalid dev address: ${addresses[2]}`);
         process.exit(1);
     }
-    if (brokerAddr && !isValidInternalAddress(brokerAddr)) {
-        console.error(`Error: invalid broker address: ${brokerAddr}`);
+    if (addresses.length >= 4 && !brokerAddr) {
+        console.error(`Error: invalid broker address: ${addresses[3]}`);
         process.exit(1);
     }
 

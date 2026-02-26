@@ -8,7 +8,7 @@
  */
 
 import * as fs from 'fs';
-import type { Network } from '@btc-vision/bitcoin';
+import { type Network, toHex, fromBech32 } from '@btc-vision/bitcoin';
 import type { Addressbook } from './types.js';
 import { walletFromKeyfile } from './wallet.js';
 import {
@@ -29,6 +29,30 @@ const HOT_KEY_PATH = `${CONFIG_DIR}/hot.key`;
  */
 export function isValidInternalAddress(address: string): boolean {
     return /^0x[0-9a-fA-F]{64}$/.test(address);
+}
+
+/**
+ * Normalize an address to 0x-prefixed 32-byte internal format.
+ * Accepts both 0x internal addresses and bech32m P2TR/P2OP addresses.
+ *
+ * For P2TR (witness v1, 32-byte program), the witness program IS the
+ * x-only tweaked pubkey which is the OPNet internal address.
+ *
+ * @returns The 0x-prefixed internal address, or null if invalid
+ */
+export function normalizeAddress(address: string): string | null {
+    if (isValidInternalAddress(address)) return address;
+
+    try {
+        const decoded = fromBech32(address);
+        if (decoded.version >= 1 && decoded.data.length === 32) {
+            return '0x' + toHex(decoded.data);
+        }
+    } catch {
+        // Not a valid bech32/bech32m address
+    }
+
+    return null;
 }
 
 /**
@@ -74,9 +98,10 @@ export async function saveAddressbook(book: Addressbook): Promise<void> {
 
 /**
  * Resolve an identifier to an internal address.
- * Accepts a role name (looked up in addressbook) or a raw 0x 32-byte address.
+ * Accepts a role name (looked up in addressbook), a raw 0x address,
+ * or a bech32m P2TR/P2OP address.
  *
- * @param identifier - Role name or 0x-prefixed 32-byte hex address
+ * @param identifier - Role name, 0x address, or bech32m address
  * @param book - The loaded addressbook
  * @returns The resolved 0x-prefixed 32-byte address, or null if invalid
  */
@@ -84,14 +109,11 @@ export function resolveAddress(
     identifier: string,
     book: Addressbook,
 ): string | null {
-    if (identifier.startsWith('0x')) {
-        if (!isValidInternalAddress(identifier)) {
-            console.error(`Invalid address: ${identifier}`);
-            return null;
-        }
-        return identifier;
-    }
+    // Try normalizing as an address first (0x or bech32m)
+    const normalized = normalizeAddress(identifier);
+    if (normalized) return normalized;
 
+    // Fall back to role lookup
     const entry = book[identifier];
     if (!entry) {
         console.error(`Role '${identifier}' not found in addressbook`);

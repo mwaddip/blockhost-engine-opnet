@@ -1,25 +1,25 @@
 /**
  * ab up <name> <address> — Update entry's address in addressbook
  *
- * Accepts a 0x-prefixed 32-byte internal address.
+ * Accepts 0x internal or bech32m (P2TR/P2OP) addresses.
  */
 
 import {
     loadAddressbook,
     saveAddressbook,
-    isValidInternalAddress,
+    normalizeAddress,
 } from '../../fund-manager/addressbook.js';
 import { IMMUTABLE_ROLES } from '../index.js';
 
 export async function upCommand(args: string[]): Promise<void> {
     if (args.length !== 2) {
-        console.error('Usage: ab up <name> <0x-address>');
+        console.error('Usage: ab up <name> <address>');
         process.exit(1);
     }
 
-    const [name, address] = args;
-    if (!name || !address) {
-        console.error('Usage: ab up <name> <0x-address>');
+    const [name, rawAddress] = args;
+    if (!name || !rawAddress) {
+        console.error('Usage: ab up <name> <address>');
         process.exit(1);
     }
 
@@ -30,9 +30,10 @@ export async function upCommand(args: string[]): Promise<void> {
         process.exit(1);
     }
 
-    if (!isValidInternalAddress(address)) {
+    const address = normalizeAddress(rawAddress);
+    if (!address) {
         console.error(
-            `Error: '${address}' is not a valid OPNet address (expected 0x + 64 hex chars).`,
+            `Error: '${rawAddress}' is not a valid OPNet address (expected 0x+64hex or bech32m).`,
         );
         process.exit(1);
     }
