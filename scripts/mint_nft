@@ -18,6 +18,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
 import * as yaml from 'js-yaml';
 import {
     AddressTypes,
@@ -118,10 +119,13 @@ function inferNetwork(rpcUrl: string) {
     return networks.opnetTestnet;
 }
 
-function p2trToOpnetAddress(p2tr: string): Address {
+function walletToOpnetAddress(p2tr: string, mldsaPublicKey: Uint8Array): Address {
+    // mldsaHash = SHA256(ML-DSA public key) — this is the OPNet address (P2OP)
+    const mldsaHash = '0x' + createHash('sha256').update(Buffer.from(mldsaPublicKey)).digest('hex');
+    // tweakedPubkey = 0x02 || x-only tweaked key decoded from P2TR bech32m
     const decoded = btcAddress.fromBech32(p2tr);
-    const hex = '0x' + Buffer.from(decoded.data).toString('hex');
-    return Address.fromString(hex);
+    const tweakedPubkey = '0x02' + Buffer.from(decoded.data).toString('hex');
+    return Address.fromString(mldsaHash, tweakedPubkey);
 }
 
 async function main(): Promise<void> {
@@ -146,7 +150,7 @@ async function main(): Promise<void> {
     const ownerAddress = Address.fromString(ownerWallet);
 
     // Get contract instance for simulation
-    const deployerAddress = p2trToOpnetAddress(wallet.p2tr);
+    const deployerAddress = walletToOpnetAddress(wallet.p2tr, wallet.mldsaKeypair.publicKey);
     const contract = getContract<IAccessCredentialNFT>(
         nftContractAddr,
         ACCESS_CREDENTIAL_NFT_ABI,
@@ -205,6 +209,8 @@ async function main(): Promise<void> {
         gasSatFee: 50_000n,
         calldata: sim.calldata!,
         challenge: challenge,
+        revealMLDSAPublicKey: true,
+        linkMLDSAPublicKeyToAddress: true,
     };
 
     const signed = await factory.signInteraction(interactionParams);
