@@ -6,6 +6,7 @@
  * OPWallet intercepts and prompts the user to sign.
  */
 import { TransactionFactory } from '@btc-vision/transaction';
+import type { Signer } from '@btc-vision/bitcoin';
 import { JSONRpcProvider } from 'opnet';
 import { networks } from '@btc-vision/bitcoin';
 
@@ -64,7 +65,7 @@ export async function sendBTC(
 
         // 4. Build — null signers, OPWallet intercepts and prompts user
         const result = await factory.createBTCTransfer({
-            signer: null,
+            signer: null as unknown as Signer, // OPWallet intercepts — signer unused
             mldsaSigner: null,
             network,
             utxos,
@@ -72,6 +73,8 @@ export async function sendBTC(
             to: toAddress,
             amount: BigInt(amountSats),
             feeRate,
+            priorityFee: 0n,
+            gasSatFee: 0n,
         });
 
         // 5. Broadcast

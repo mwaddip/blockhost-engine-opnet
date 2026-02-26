@@ -283,7 +283,7 @@ async function executeNativeSwapBuy(
 
     // Phase 1: Reserve
     console.log('  Phase 1: Reserving swap...');
-    const reserveSim = await nativeSwap.reserve(token, satsIn, minTokensOut, 1);
+    const reserveSim = await nativeSwap.reserve(token, satsIn, minTokensOut, 1, wallet.address.toBuffer());
     if ('error' in reserveSim) {
         throw new Error(`reserve failed: ${reserveSim.error}`);
     }
