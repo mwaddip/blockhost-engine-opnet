@@ -1117,6 +1117,61 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
 # ---------------------------------------------------------------------------
 
 
+def _bech32_to_opnet_address(address: str) -> Optional[str]:
+    """Convert a P2TR bech32m address to 0x-prefixed 32-byte OPNet address.
+
+    The witness program of a P2TR address is the 32-byte x-only tweaked pubkey,
+    which is the OPNet internal address. No RPC needed — pure bech32 decode.
+    Returns None if not a valid P2TR address.
+    """
+    try:
+        import segwit_addr  # type: ignore[import]
+        _, witness_version, witness_program = segwit_addr.decode(None, address)
+        if witness_version == 1 and len(witness_program) == 32:
+            return "0x" + bytes(witness_program).hex()
+    except Exception:
+        pass
+    # Fallback: manual bech32m decode using Python standard library
+    try:
+        from hashlib import sha256 as _  # noqa — just checking stdlib available
+        # bech32m charset
+        CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+        addr = address.lower()
+        sep = addr.rfind("1")
+        if sep < 1:
+            return None
+        data_chars = addr[sep + 1:]
+        decoded = []
+        for c in data_chars:
+            v = CHARSET.find(c)
+            if v < 0:
+                return None
+            decoded.append(v)
+        # Strip 6-char checksum
+        if len(decoded) < 7:
+            return None
+        decoded = decoded[:-6]
+        # First element is witness version
+        witness_version = decoded[0]
+        if witness_version != 1:
+            return None
+        # Convert from 5-bit groups to 8-bit bytes
+        bits = 0
+        value = 0
+        result = []
+        for v in decoded[1:]:
+            value = (value << 5) | v
+            bits += 5
+            if bits >= 8:
+                bits -= 8
+                result.append((value >> bits) & 0xFF)
+        if len(result) == 32:
+            return "0x" + bytes(result).hex()
+    except Exception:
+        pass
+    return None
+
+
 def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
     """Mint admin credential NFT #0.
 
@@ -1132,6 +1187,14 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
 
         if not validate_address(admin_wallet):
             return False, "Invalid admin wallet address"
+
+        # blockhost-mint-nft requires 0x + 64 hex (OPNet internal address).
+        # The wallet page submits a bech32m P2TR address — convert if needed.
+        if not admin_wallet.startswith("0x"):
+            resolved = _bech32_to_opnet_address(admin_wallet)
+            if not resolved:
+                return False, f"--owner-wallet must be 0x + 64 hex characters (32-byte OPNet address), got: {admin_wallet}"
+            admin_wallet = resolved
 
         # Build encrypted connection details for the NFT
         user_encrypted = ""
