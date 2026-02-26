@@ -12,8 +12,7 @@ import { networks } from '@btc-vision/bitcoin';
 declare const window: Record<string, unknown>;
 
 function resolveNetwork(name: string) {
-    return name === 'mainnet' ? networks.bitcoin :
-           name === 'testnet' ? networks.opnetTestnet : networks.regtest;
+    return name === 'mainnet' ? networks.bitcoin : networks.opnetTestnet;
 }
 
 export interface TopUpResult {

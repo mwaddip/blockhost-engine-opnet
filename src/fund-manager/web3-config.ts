@@ -68,8 +68,7 @@ function requireAddress(value: unknown, label: string): string {
 
 function inferNetwork(rpcUrl: string): Network {
     if (rpcUrl.includes('mainnet')) return networks.bitcoin;
-    if (rpcUrl.includes('testnet')) return networks.opnetTestnet;
-    return networks.regtest;
+    return networks.opnetTestnet;
 }
 
 /**

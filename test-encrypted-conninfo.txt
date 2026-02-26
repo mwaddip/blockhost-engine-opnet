@@ -1,0 +1,7 @@
+# Encrypted connection details for subscription #3
+# Decrypt with SHAKE256(schnorr_signature) → AES-256-GCM
+# Format: iv (12 bytes) || ciphertext || authTag (16 bytes)
+subscription_id: 3
+plaintext: {"hostname":"2a01:4f8:c012:1234::1","port":22,"username":"blockhost"}
+symmetric_key: a0b0a2ec20ee93071b7563c6c818baaf47ff040bf617c68c22fd88c57e22d04b
+encrypted_hex: 8d2632022ab07230a1978655230a9cb5fe98b7ebcd76a4b02db01a12c3411ed6a6b24c14c277d97f5c2e04269c9f0a1b03ef22baa50f179b411a9afd6fb42ca42396858fafbf130ce362d36e0bca0232b7faa94220b19fe02eadf09ef7a22b15e6

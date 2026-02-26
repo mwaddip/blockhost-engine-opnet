@@ -10,12 +10,12 @@ import {
 import { JSONRpcProvider } from 'opnet';
 import { networks } from '@btc-vision/bitcoin';
 
-const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://regtest.opnet.org';
+const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://testnet.opnet.org';
 const network = RPC_URL.includes('mainnet')
     ? networks.bitcoin
     : RPC_URL.includes('testnet')
       ? networks.opnetTestnet
-      : networks.regtest;
+      : networks.opnetTestnet;
 
 const MNEMONIC = process.env.OPNET_MNEMONIC;
 if (!MNEMONIC) {

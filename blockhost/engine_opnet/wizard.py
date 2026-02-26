@@ -42,20 +42,17 @@ blueprint = Blueprint(
 # ---------------------------------------------------------------------------
 
 NETWORK_NAMES = {
-    "regtest": "Regtest (local)",
     "testnet": "Testnet",
     "mainnet": "Bitcoin Mainnet",
 }
 
 NETWORK_RPC = {
-    "regtest": "https://regtest.opnet.org",
     "testnet": "https://testnet.opnet.org",
     "mainnet": "https://mainnet.opnet.org",
 }
 
-# Default payment tokens per network (BHTT on regtest, MOTO on testnet)
+# Default payment tokens per network (MOTO on testnet)
 NETWORK_PAYMENT_TOKEN = {
-    "regtest": "0x556cf2a9f6a3335d616d61ba9cf046e63ab855cdfce514105d60c3aed103eb9a",
     "testnet": "0xfd4473840751d58d9f8b73bdd57d6c5260453d5518bd7cd02d0a4cf3df9bf4dd",
     "mainnet": "",
 }
@@ -111,10 +108,10 @@ def validate_address(address: str) -> bool:
 def wizard_opnet():
     """OPNet blockchain configuration step."""
     if request.method == "POST":
-        network = request.form.get("network", "regtest").strip()
+        network = request.form.get("network", "testnet").strip()
         rpc_url = request.form.get("rpc_url", "").strip()
         if not rpc_url:
-            rpc_url = NETWORK_RPC.get(network, NETWORK_RPC["regtest"])
+            rpc_url = NETWORK_RPC.get(network, NETWORK_RPC["testnet"])
 
         session["blockchain"] = {
             "network": network,
@@ -172,7 +169,7 @@ def api_generate_wallet():
     Returns mnemonic phrase and P2TR address.
     """
     blockchain = session.get("blockchain", {})
-    network = blockchain.get("network", "regtest")
+    network = blockchain.get("network", "testnet")
 
     try:
         result = subprocess.run(
@@ -216,7 +213,7 @@ def api_validate_mnemonic():
         return jsonify({"error": "Mnemonic must contain only lowercase words"}), 400
 
     blockchain = session.get("blockchain", {})
-    network = blockchain.get("network", "regtest")
+    network = blockchain.get("network", "testnet")
 
     try:
         result = subprocess.run(
@@ -560,7 +557,7 @@ def _run_deploy(
 def get_ui_params(session_data: dict) -> dict:
     """Return OPNet-specific UI parameters for wizard templates."""
     blockchain = session_data.get("blockchain", {})
-    network = blockchain.get("network", "regtest")
+    network = blockchain.get("network", "testnet")
     return {
         "network_name": NETWORK_NAMES.get(network, network),
         "network": network,
@@ -651,7 +648,7 @@ def encrypt_config(signature: str, plaintext: str) -> str:
 def get_summary_data(session_data: dict) -> dict:
     """Return blockchain summary data for the summary page."""
     blockchain = session_data.get("blockchain", {})
-    network = blockchain.get("network", "regtest")
+    network = blockchain.get("network", "testnet")
     return {
         "network_name": NETWORK_NAMES.get(network, network),
         "network": network,

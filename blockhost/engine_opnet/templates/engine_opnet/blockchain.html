@@ -21,7 +21,7 @@
                     <option value="{{ nid }}"
                             data-rpc="{{ network_rpc.get(nid, '') }}"
                             data-payment-token="{{ network_payment_token.get(nid, '') }}"
-                            {% if blockchain.get('network', 'regtest') == nid %}selected{% endif %}>
+                            {% if blockchain.get('network', 'testnet') == nid %}selected{% endif %}>
                         {{ nname }}
                     </option>
                     {% endfor %}
@@ -34,7 +34,7 @@
             <div class="form-group">
                 <label for="rpc_url">RPC Endpoint</label>
                 <input type="text" id="rpc_url" name="rpc_url"
-                       value="{{ blockchain.get('rpc_url', 'https://regtest.opnet.org') }}"
+                       value="{{ blockchain.get('rpc_url', 'https://testnet.opnet.org') }}"
                        placeholder="https://...">
                 <p class="text-muted mt-1" style="font-size: 0.75rem;">
                     OPNet RPC nodes. For production, use a dedicated node.
@@ -222,11 +222,11 @@
             <div class="form-group">
                 <label for="payment_token">Payment Token Address <span style="color: var(--danger, #dc3545);">*</span></label>
                 <input type="text" id="payment_token" name="payment_token"
-                       value="{{ blockchain.get('payment_token', '') or network_payment_token.get(blockchain.get('network', 'regtest'), '') }}"
+                       value="{{ blockchain.get('payment_token', '') or network_payment_token.get(blockchain.get('network', 'testnet'), '') }}"
                        {% if not blockchain.get('payment_token', '') %}data-was-default="true"{% endif %}
                        placeholder="0x... (64 hex chars)" required>
                 <p class="text-muted mt-1" style="font-size: 0.75rem;">
-                    OP_20 stablecoin contract address for subscription payments (e.g. BHTT on regtest).
+                    OP_20 stablecoin contract address for subscription payments (e.g. MOTO on testnet).
                 </p>
             </div>
         </div>
@@ -631,7 +631,7 @@ function topUpWallet(mode) {
 
     var rpcUrl = document.getElementById('rpc_url').value;
     var networkName = document.getElementById('network').value;
-    if (networkName === 'custom') networkName = 'regtest';
+    if (networkName === 'custom') networkName = 'testnet';
 
     topup.sendBTC(rpcUrl, networkName, deployerAddr, sats)
     .then(function(result) {
