@@ -29,7 +29,7 @@ export interface Web3Config {
     readonly rpcUrl: string;
     readonly network: Network;
     readonly nftContract: string;
-    readonly subscriptionsContract: string;
+    readonly subscriptionContract: string;
     readonly paymentToken: string;
     readonly motoswap: MotoSwapConfig | null;
     readonly nativeSwap: string | null;
@@ -38,7 +38,7 @@ export interface Web3Config {
 interface RawBlockchain {
     readonly rpc_url?: string;
     readonly nft_contract?: string;
-    readonly subscriptions_contract?: string;
+    readonly subscription_contract?: string;
     readonly payment_token?: string;
 }
 
@@ -102,9 +102,9 @@ export function loadWeb3Config(): Web3Config {
         bc.nft_contract,
         'blockchain.nft_contract',
     );
-    const subscriptionsContract = requireAddress(
-        bc.subscriptions_contract,
-        'blockchain.subscriptions_contract',
+    const subscriptionContract = requireAddress(
+        bc.subscription_contract,
+        'blockchain.subscription_contract',
     );
     const paymentToken = requireAddress(
         bc.payment_token,
@@ -128,7 +128,7 @@ export function loadWeb3Config(): Web3Config {
         rpcUrl,
         network: inferNetwork(rpcUrl),
         nftContract,
-        subscriptionsContract,
+        subscriptionContract,
         paymentToken,
         motoswap,
         nativeSwap,

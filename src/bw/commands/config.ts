@@ -75,7 +75,7 @@ export async function configCommand(
     }
 
     const web3Config = loadWeb3Config();
-    const contractAddress = web3Config.subscriptionsContract;
+    const contractAddress = web3Config.subscriptionContract;
 
     const signedContract = getContract<IBlockhostSubscriptions>(
         contractAddress,

@@ -7,7 +7,7 @@
 blockchain:
   rpc_url: "https://regtest.opnet.org"
   nft_contract: "0xf66a84fa60a793421b695299cf3199f282df0035b5779d1924fb5cbd670a21b2"
-  subscriptions_contract: "0xc89c4e3e2df8ba367601066835f064d84a34bbf5771c8af86ee805fb11e53a87"
+  subscription_contract: "0xc89c4e3e2df8ba367601066835f064d84a34bbf5771c8af86ee805fb11e53a87"
   payment_token: "0x556cf2a9f6a3335d616d61ba9cf046e63ab855cdfce514105d60c3aed103eb9a"
 
 # MotoSwap AMM — OP20-to-OP20 token swaps.

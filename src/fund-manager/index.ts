@@ -81,7 +81,7 @@ export async function runFundCycle(provider: JSONRpcProvider, network: Network):
 
   try {
     const web3Config = loadWeb3Config();
-    const contractAddress = web3Config.subscriptionsContract;
+    const contractAddress = web3Config.subscriptionContract;
 
     console.log("[FUND] Starting fund cycle...");
 
@@ -151,7 +151,7 @@ export async function runGasCheck(provider: JSONRpcProvider, network: Network): 
 
   try {
     const web3Config = loadWeb3Config();
-    const contractAddress = web3Config.subscriptionsContract;
+    const contractAddress = web3Config.subscriptionContract;
 
     const book = loadAddressbook();
     if (Object.keys(book).length === 0) return;

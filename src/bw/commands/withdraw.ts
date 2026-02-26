@@ -87,7 +87,7 @@ export async function withdrawCommand(
     }
 
     const web3Config = loadWeb3Config();
-    const contractAddress = web3Config.subscriptionsContract;
+    const contractAddress = web3Config.subscriptionContract;
 
     console.log(
         `Withdrawing from contract to ${toRole}...`,

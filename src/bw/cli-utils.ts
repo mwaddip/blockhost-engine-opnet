@@ -26,7 +26,7 @@ export function createProviderAndContract(): {
     const cfg = loadWeb3Config();
     const provider = new JSONRpcProvider({ url: cfg.rpcUrl, network: cfg.network });
     const contract = getContract<IBlockhostSubscriptions>(
-        cfg.subscriptionsContract,
+        cfg.subscriptionContract,
         BLOCKHOST_SUBSCRIPTIONS_ABI,
         provider,
         cfg.network,

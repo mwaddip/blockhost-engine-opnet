@@ -162,7 +162,7 @@ async function main() {
   try {
     const web3Config = loadWeb3Config();
     rpcUrl = web3Config.rpcUrl;
-    contractAddress = web3Config.subscriptionsContract;
+    contractAddress = web3Config.subscriptionContract;
     network = web3Config.network;
   } catch (err) {
     console.error("Error: web3-defaults.yaml not found or invalid:", err);

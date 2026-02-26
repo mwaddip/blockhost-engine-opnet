@@ -37,7 +37,7 @@ The token shortcuts table (spec §1, line 256) becomes:
 ## 3. `web3-defaults.yaml` schema expanded (spec §6, line 795)
 
 New required keys under `blockchain:`:
-- `subscriptions_contract` — subscription contract address (was `BLOCKHOST_CONTRACT` env var on EVM)
+- `subscription_contract` — subscription contract address (was `BLOCKHOST_CONTRACT` env var on EVM)
 - `payment_token` — primary stablecoin address
 
 New optional sections:

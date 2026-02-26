@@ -491,7 +491,7 @@ def _run_deploy(
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         mnemonic_file = CONFIG_DIR / "deployer.key"
         mnemonic_file.write_text(deployer_mnemonic)
-        mnemonic_file.chmod(0o600)
+        _set_blockhost_ownership(mnemonic_file, 0o640)
 
         env = {
             **os.environ,
@@ -840,7 +840,7 @@ def finalize_wallet(config: dict) -> tuple[bool, Optional[str]]:
             return True, None
 
         mnemonic_file.write_text(mnemonic)
-        _set_blockhost_ownership(mnemonic_file, 0o600)
+        _set_blockhost_ownership(mnemonic_file, 0o640)
 
         config["_step_result_wallet"] = {
             "address": blockchain.get("deployer_address", ""),
@@ -899,7 +899,7 @@ def finalize_contracts(config: dict) -> tuple[bool, Optional[str]]:
         if not mnemonic_file.exists():
             if mnemonic:
                 mnemonic_file.write_text(mnemonic)
-                _set_blockhost_ownership(mnemonic_file, 0o600)
+                _set_blockhost_ownership(mnemonic_file, 0o640)
             else:
                 return False, "Deployer mnemonic not available"
 
@@ -1012,8 +1012,10 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
             "blockchain": {
                 "rpc_url": rpc_url,
                 "nft_contract": nft_contract,
-                "subscriptions_contract": sub_contract,
+                "subscription_contract": sub_contract,
                 "payment_token": payment_token,
+                "chain_id": blockchain.get("chain_id", ""),
+                "server_public_key": server_pubkey,
             },
         }
 
@@ -1041,7 +1043,7 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
         bh_config: dict = {
             "server": {
                 "address": deployer_address,
-                "mnemonic_file": "/etc/blockhost/deployer.key",
+                "key_file": "/etc/blockhost/deployer.key",
             },
             "server_public_key": server_pubkey,
             "public_secret": public_secret,
@@ -1063,6 +1065,11 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
             "credential_nft_id": 0,
             "max_command_age": 300,
         }
+
+        if admin_commands.get("enabled"):
+            bh_config["admin"]["destination_mode"] = admin_commands.get(
+                "destination_mode", "self"
+            )
 
         bh_path = CONFIG_DIR / "blockhost.yaml"
         _write_yaml(bh_path, bh_config)
@@ -1094,6 +1101,19 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
             sig_file = CONFIG_DIR / "admin-signature.key"
             sig_file.write_text(admin_signature)
             _set_blockhost_ownership(sig_file, 0o640)
+
+        # --- .env ---
+        opt_dir = Path("/opt/blockhost")
+        opt_dir.mkdir(parents=True, exist_ok=True)
+        env_lines = [
+            f"RPC_URL={rpc_url}",
+            f"BLOCKHOST_CONTRACT={sub_contract}",
+            f"NFT_CONTRACT={nft_contract}",
+            f"DEPLOYER_KEY_FILE=/etc/blockhost/deployer.key",
+        ]
+        env_path = opt_dir / ".env"
+        env_path.write_text("\n".join(env_lines) + "\n")
+        _set_blockhost_ownership(env_path, 0o640)
 
         # --- Initialize vms.json if missing ---
         vms_path = var_dir / "vms.json"

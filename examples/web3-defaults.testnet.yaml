@@ -12,7 +12,7 @@
 blockchain:
   rpc_url: "https://testnet.opnet.org"
   nft_contract: "DEPLOY_YOUR_OWN"
-  subscriptions_contract: "DEPLOY_YOUR_OWN"
+  subscription_contract: "DEPLOY_YOUR_OWN"
   payment_token: "0xfd4473840751d58d9f8b73bdd57d6c5260453d5518bd7cd02d0a4cf3df9bf4dd"
 
 # MotoSwap AMM — OP20-to-OP20 token swaps.
