@@ -145,7 +145,6 @@ async function main(): Promise<void> {
         ACCESS_CREDENTIAL_NFT_ABI,
         provider,
         network,
-        wallet.p2tr,
     );
 
     // Simulate the mint call
