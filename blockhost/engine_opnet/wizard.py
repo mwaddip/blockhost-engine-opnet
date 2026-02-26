@@ -53,7 +53,7 @@ NETWORK_RPC = {
 
 # Default payment tokens per network (MOTO on testnet)
 NETWORK_PAYMENT_TOKEN = {
-    "testnet": "0xfd4473840751d58d9f8b73bdd57d6c5260453d5518bd7cd02d0a4cf3df9bf4dd",
+    "testnet": "0x12aa57ada239a129c13a818ce23620243b727d22b871d561aafa3bdb23e9d68e",
     "mainnet": "",
 }
 

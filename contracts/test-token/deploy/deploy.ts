@@ -14,12 +14,12 @@ import { networks, Network } from '@btc-vision/bitcoin';
 // ── Configuration ────────────────────────────────────────────────────
 
 const NETWORKS: Record<string, { rpc: string; network: Network }> = {
-    regtest: { rpc: 'https://regtest.opnet.org', network: networks.regtest },
+    testnet: { rpc: 'https://testnet.opnet.org', network: networks.opnetTestnet },
     mainnet: { rpc: 'https://mainnet.opnet.org', network: networks.bitcoin },
 };
 
 function usage(): never {
-    console.error('Usage: npx tsx deploy.ts <wasm-path> [--calldata-hex <hex>] [--network regtest|mainnet]');
+    console.error('Usage: npx tsx deploy.ts <wasm-path> [--calldata-hex <hex>] [--network testnet|mainnet]');
     console.error('');
     console.error('Environment: OPNET_MNEMONIC (required)');
     console.error('');
@@ -37,7 +37,7 @@ if (args.length === 0) usage();
 
 let wasmPath: string | null = null;
 let calldataHex: string | null = null;
-let networkName = 'regtest';
+let networkName = 'testnet';
 
 for (let i = 0; i < args.length; i++) {
     if (args[i] === '--calldata-hex') {
@@ -100,7 +100,7 @@ function printAddress(label: string, info: AddressInfo): void {
 
 async function main(): Promise<void> {
     const { rpc, network } = netConfig;
-    const provider = new JSONRpcProvider(rpc, network);
+    const provider = new JSONRpcProvider({ url: rpc, network });
 
     console.log(`Network: ${networkName} (${rpc})\n`);
 
