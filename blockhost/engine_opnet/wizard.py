@@ -486,7 +486,7 @@ def _run_deploy(
     try:
         # Write mnemonic for the deploy script
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        mnemonic_file = CONFIG_DIR / "deployer.mnemonic"
+        mnemonic_file = CONFIG_DIR / "deployer.key"
         mnemonic_file.write_text(deployer_mnemonic)
         mnemonic_file.chmod(0o600)
 
@@ -811,7 +811,7 @@ def _bw_env(blockchain: dict) -> dict:
 
 
 def finalize_wallet(config: dict) -> tuple[bool, Optional[str]]:
-    """Write deployer mnemonic to /etc/blockhost/deployer.mnemonic.
+    """Write deployer mnemonic to /etc/blockhost/deployer.key.
 
     Idempotent: skips write if file exists with matching content.
     """
@@ -827,7 +827,7 @@ def finalize_wallet(config: dict) -> tuple[bool, Optional[str]]:
         if len(words) not in (12, 15, 18, 21, 24):
             return False, f"Invalid mnemonic word count ({len(words)})"
 
-        mnemonic_file = CONFIG_DIR / "deployer.mnemonic"
+        mnemonic_file = CONFIG_DIR / "deployer.key"
 
         # Idempotent: skip if same mnemonic already written
         if mnemonic_file.exists() and mnemonic_file.read_text().strip() == mnemonic:
@@ -892,7 +892,7 @@ def finalize_contracts(config: dict) -> tuple[bool, Optional[str]]:
             return True, None
 
         mnemonic = blockchain.get("deployer_mnemonic", "")
-        mnemonic_file = CONFIG_DIR / "deployer.mnemonic"
+        mnemonic_file = CONFIG_DIR / "deployer.key"
         if not mnemonic_file.exists():
             if mnemonic:
                 mnemonic_file.write_text(mnemonic)
@@ -1038,7 +1038,7 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
         bh_config: dict = {
             "server": {
                 "address": deployer_address,
-                "mnemonic_file": "/etc/blockhost/deployer.mnemonic",
+                "mnemonic_file": "/etc/blockhost/deployer.key",
             },
             "server_public_key": server_pubkey,
             "public_secret": public_secret,
@@ -1292,7 +1292,7 @@ def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
         if deployer_address:
             addressbook["server"] = {
                 "address": deployer_address,
-                "keyfile": "/etc/blockhost/deployer.mnemonic",
+                "keyfile": "/etc/blockhost/deployer.key",
             }
 
         if blockchain.get("revenue_share_dev"):
@@ -1310,7 +1310,7 @@ def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
                     cmd.append(admin_wallet)
                 if blockchain.get("revenue_share_broker"):
                     cmd.append(admin_wallet)
-                cmd.append("/etc/blockhost/deployer.mnemonic")
+                cmd.append("/etc/blockhost/deployer.key")
 
                 result = subprocess.run(
                     cmd,
