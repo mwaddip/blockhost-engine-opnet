@@ -657,6 +657,42 @@
             var normalized = normalizeWalletAddress(address, provider.network);
             return await provider.getPublicKeyInfo(normalized, !!isContract);
         },
+        // Poll transaction status: sent → mempool → mined. Calls onStatus(state, detail).
+        // States: 'sent', 'mempool', 'mined', 'error'. Returns on 'mined' or after timeout.
+        trackTransaction: async function(rpcUrl, txId, onStatus, timeoutMs) {
+            var provider = getProvider(rpcUrl);
+            var elapsed = 0;
+            var interval = 4000;
+            var maxMs = timeoutMs || 300000; // 5 min default
+            var inMempool = false;
+
+            while (elapsed < maxMs) {
+                try {
+                    // Check if mined
+                    var tx = await provider.getTransaction(txId);
+                    if (tx) {
+                        onStatus('mined', tx);
+                        return 'mined';
+                    }
+                } catch (_) { /* not mined yet */ }
+
+                try {
+                    // Check if in mempool
+                    if (!inMempool) {
+                        var pending = await provider.getPendingTransaction(txId);
+                        if (pending) {
+                            inMempool = true;
+                            onStatus('mempool', pending);
+                        }
+                    }
+                } catch (_) { /* not in mempool yet */ }
+
+                await new Promise(function(r) { setTimeout(r, interval); });
+                elapsed += interval;
+            }
+            onStatus('error', 'Tracking timed out after ' + Math.round(maxMs / 1000) + 's');
+            return 'timeout';
+        },
         inferNetwork: inferNetwork,
         expandToDecimals: BitcoinUtils.expandToDecimals.bind(BitcoinUtils),
     };
@@ -1296,6 +1332,7 @@
             };
             var allowanceTx = await allowanceSim.sendTransaction(approveParams);
             console.log('Allowance tx:', allowanceTx.transactionId);
+            showStatus(purchaseStatus, 'Allowance sent (' + allowanceTx.transactionId.slice(0, 12) + '...). Simulating purchase...', 'info');
 
             // Step 2: Simulate buySubscription with setAccessList (carries state forward for simulation)
             var subsContract = window.OPNet.getSubscriptionsContract(CONFIG.rpcUrl, CONFIG.subscriptionContract, opnetAddress);
@@ -1324,20 +1361,45 @@
             var buyTx = await buySim.sendTransaction(purchaseParams);
             console.log('Purchase tx:', buyTx.transactionId);
 
-            // Success
+            // Track both transactions
             var subId = buySim.properties.subscriptionId;
-            showStatus(purchaseStatus, 'Subscription purchased! ID: ' + subId.toString() + ' (tx: ' + buyTx.transactionId.slice(0, 12) + '...)', 'success');
-            updateStep(3, 'done');
+            var txId = buyTx.transactionId;
+            showStatus(purchaseStatus, '<span class="spinner"></span>Transaction sent. Waiting for confirmation...', 'info');
 
-            // Show result
             resultCard.classList.remove('hidden');
             resultCard.innerHTML =
-                '<h2>Subscription Active</h2>' +
-                '<p>Plan: ' + plan.name + '</p>' +
-                '<p>Duration: ' + days + ' days</p>' +
-                '<p>Subscription ID: ' + subId.toString() + '</p>' +
-                '<p>Transaction: ' + buyTx.transactionId + '</p>' +
-                '<p class="step-desc">Your server will be provisioned shortly. Check back in the "View My Servers" tab once your NFT is minted.</p>';
+                '<h2>Subscription #' + subId.toString() + '</h2>' +
+                '<p>Plan: ' + plan.name + ' &middot; ' + days + ' days</p>' +
+                '<div id="tx-tracker">' +
+                    '<div class="step"><div class="step-number done" id="tx-step-sent">1</div>' +
+                        '<div class="step-content"><div class="step-title">Sent</div>' +
+                        '<div class="step-desc" style="word-break:break-all">' + txId + '</div></div></div>' +
+                    '<div class="step"><div class="step-number" id="tx-step-mempool">2</div>' +
+                        '<div class="step-content"><div class="step-title" id="tx-label-mempool">Mempool</div>' +
+                        '<div class="step-desc" id="tx-desc-mempool">Waiting to enter mempool...</div></div></div>' +
+                    '<div class="step"><div class="step-number" id="tx-step-mined">3</div>' +
+                        '<div class="step-content"><div class="step-title" id="tx-label-mined">Mined</div>' +
+                        '<div class="step-desc" id="tx-desc-mined">Waiting for block confirmation...</div></div></div>' +
+                '</div>';
+
+            // Track in background — don't block the UI
+            window.OPNet.trackTransaction(CONFIG.rpcUrl, txId, function(state, detail) {
+                if (state === 'mempool') {
+                    document.getElementById('tx-step-mempool').classList.add('done');
+                    document.getElementById('tx-desc-mempool').textContent = 'Transaction is in the mempool';
+                } else if (state === 'mined') {
+                    document.getElementById('tx-step-mempool').classList.add('done');
+                    document.getElementById('tx-desc-mempool').textContent = 'Transaction is in the mempool';
+                    document.getElementById('tx-step-mined').classList.add('done');
+                    document.getElementById('tx-desc-mined').textContent = 'Confirmed in block!';
+                    showStatus(purchaseStatus, 'Subscription confirmed! Your server will be provisioned shortly.', 'success');
+                    updateStep(3, 'done');
+                } else if (state === 'error') {
+                    document.getElementById('tx-desc-mined').textContent = String(detail);
+                    showStatus(purchaseStatus, 'Transaction sent but tracking timed out. It may still confirm — check the View My Servers tab.', 'info');
+                    updateStep(3, 'done');
+                }
+            });
 
         } catch (err) {
             console.error(err);
