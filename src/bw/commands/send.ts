@@ -40,7 +40,7 @@ export async function executeSend(
     if (!wallet)
         throw new Error(`Cannot sign as '${fromRole}': no keyfile`);
 
-    const toAddress = resolveAddress(toRole, book);
+    const toAddress = await resolveAddress(toRole, book);
     if (!toAddress)
         throw new Error(`Cannot resolve recipient '${toRole}'`);
 

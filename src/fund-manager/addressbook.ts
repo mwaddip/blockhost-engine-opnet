@@ -9,13 +9,18 @@
 
 import * as fs from 'fs';
 import { type Network, toHex, fromBech32 } from '@btc-vision/bitcoin';
+import { JSONRpcProvider } from 'opnet';
 import type { Addressbook } from './types.js';
 import { walletFromKeyfile } from './wallet.js';
+import { loadRpcConfig } from './web3-config.js';
 import {
     addressbookSave,
     generateWallet as rootAgentGenerateWallet,
 } from '../root-agent/client.js';
 import type { Wallet } from '@btc-vision/transaction';
+
+/** OPNet P2OP bech32 HRPs — witness program is ML-DSA hash, NOT tweaked pubkey. */
+const P2OP_PREFIXES = new Set(['op', 'opt', 'opr']);
 
 const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
 const ADDRESSBOOK_PATH = `${CONFIG_DIR}/addressbook.json`;
@@ -33,19 +38,29 @@ export function isValidInternalAddress(address: string): boolean {
 
 /**
  * Normalize an address to 0x-prefixed 32-byte internal format.
- * Accepts both 0x internal addresses and bech32m P2TR/P2OP addresses.
+ * Accepts 0x internal addresses, standard P2TR bech32m, and OPNet P2OP addresses.
  *
- * For P2TR (witness v1, 32-byte program), the witness program IS the
- * x-only tweaked pubkey which is the OPNet internal address.
+ * For standard P2TR (bc1p/tb1p/bcrt1p), the witness program IS the
+ * x-only tweaked pubkey — extracted directly.
+ *
+ * For OPNet P2OP (op1p/opt1p/opr1p), the witness program is the
+ * ML-DSA key hash, NOT the tweaked pubkey. These must be resolved
+ * via RPC to get the actual on-chain identity.
  *
  * @returns The 0x-prefixed internal address, or null if invalid
  */
-export function normalizeAddress(address: string): string | null {
+export async function normalizeAddress(address: string): Promise<string | null> {
     if (isValidInternalAddress(address)) return address;
 
     try {
         const decoded = fromBech32(address);
         if (decoded.version >= 1 && decoded.data.length === 32) {
+            if (P2OP_PREFIXES.has(decoded.prefix)) {
+                // P2OP: witness program is ML-DSA hash — resolve via RPC
+                const mldsaHash = '0x' + toHex(decoded.data);
+                return await resolveViaRpc(mldsaHash);
+            }
+            // Standard P2TR: witness program is the tweaked pubkey
             return '0x' + toHex(decoded.data);
         }
     } catch {
@@ -53,6 +68,41 @@ export function normalizeAddress(address: string): string | null {
     }
 
     return null;
+}
+
+/**
+ * Resolve an ML-DSA hash to the tweaked pubkey (on-chain identity) via RPC.
+ *
+ * If the RPC returns the same value we sent (address not indexed yet),
+ * we reject it — storing the ML-DSA hash as the on-chain identity would
+ * cause NFTs and transactions to go to the wrong address.
+ */
+async function resolveViaRpc(mldsaHash: string): Promise<string | null> {
+    let provider: JSONRpcProvider | null = null;
+    try {
+        const { rpcUrl, network } = loadRpcConfig();
+        provider = new JSONRpcProvider({ url: rpcUrl, network });
+        const result = await provider.getPublicKeyInfo(mldsaHash, false);
+        const resolved = String(result);
+        if (!isValidInternalAddress(resolved)) return null;
+
+        // If RPC returned the same value, the address isn't indexed yet
+        if (resolved.toLowerCase() === mldsaHash.toLowerCase()) {
+            console.error(
+                `[addressbook] P2OP address not yet indexed on RPC. ` +
+                `The wallet must have at least one on-chain transaction before it can be resolved. ` +
+                `Use the 0x internal address directly, or try again after the wallet has transacted.`,
+            );
+            return null;
+        }
+
+        return resolved;
+    } catch (err) {
+        console.error(`[addressbook] Failed to resolve P2OP address via RPC: ${err}`);
+        return null;
+    } finally {
+        if (provider) await provider.close();
+    }
 }
 
 /**
@@ -105,12 +155,12 @@ export async function saveAddressbook(book: Addressbook): Promise<void> {
  * @param book - The loaded addressbook
  * @returns The resolved 0x-prefixed 32-byte address, or null if invalid
  */
-export function resolveAddress(
+export async function resolveAddress(
     identifier: string,
     book: Addressbook,
-): string | null {
+): Promise<string | null> {
     // Try normalizing as an address first (0x or bech32m)
-    const normalized = normalizeAddress(identifier);
+    const normalized = await normalizeAddress(identifier);
     if (normalized) return normalized;
 
     // Fall back to role lookup

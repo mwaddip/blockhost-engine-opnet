@@ -42,7 +42,7 @@ export async function executeBalance(
     contract: IBlockhostSubscriptions,
     network: Network,
 ): Promise<BalanceResult> {
-    const address = resolveAddress(roleOrAddr, book);
+    const address = await resolveAddress(roleOrAddr, book);
     if (!address) {
         throw new Error(`Cannot resolve address for '${roleOrAddr}'`);
     }
@@ -84,7 +84,7 @@ export async function balanceCommand(
         process.exit(1);
     }
 
-    const address = resolveAddress(roleOrAddr, book);
+    const address = await resolveAddress(roleOrAddr, book);
     if (!address) {
         process.exit(1);
     }

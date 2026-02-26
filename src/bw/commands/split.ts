@@ -85,7 +85,7 @@ export async function splitCommand(
 
     const recipients: string[] = [];
     for (const role of recipientRoles) {
-        const addr = resolveAddress(role, book);
+        const addr = await resolveAddress(role, book);
         if (!addr) {
             process.exit(1);
         }

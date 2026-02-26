@@ -126,7 +126,7 @@ export async function distributeRevenueShares(
     let distributed = 0n;
     for (let i = 0; i < revenueConfig.recipients.length; i++) {
       const recipient = revenueConfig.recipients[i]!;
-      const recipientAddress = resolveAddress(recipient.role, book);
+      const recipientAddress = await resolveAddress(recipient.role, book);
       if (!recipientAddress) {
         console.error(`[FUND] Revenue share recipient '${recipient.role}' not in addressbook`);
         continue;
@@ -164,7 +164,7 @@ export async function sendRemainderToAdmin(
   contract: IBlockhostSubscriptions,
   network: Network,
 ): Promise<void> {
-  if (!resolveAddress("admin", book)) {
+  if (!await resolveAddress("admin", book)) {
     console.error("[FUND] Cannot send remainder: admin not in addressbook");
     return;
   }

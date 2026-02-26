@@ -50,10 +50,10 @@ export async function initCommand(args: string[]): Promise<void> {
         process.exit(1);
     }
 
-    const adminAddr = normalizeAddress(addresses[0] ?? '');
-    const serverAddr = normalizeAddress(addresses[1] ?? '');
-    const devAddr = addresses.length >= 3 ? normalizeAddress(addresses[2]!) : null;
-    const brokerAddr = addresses.length >= 4 ? normalizeAddress(addresses[3]!) : null;
+    const adminAddr = await normalizeAddress(addresses[0] ?? '');
+    const serverAddr = await normalizeAddress(addresses[1] ?? '');
+    const devAddr = addresses.length >= 3 ? await normalizeAddress(addresses[2]!) : null;
+    const brokerAddr = addresses.length >= 4 ? await normalizeAddress(addresses[3]!) : null;
 
     if (!adminAddr) {
         console.error(

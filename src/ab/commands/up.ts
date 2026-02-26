@@ -30,7 +30,7 @@ export async function upCommand(args: string[]): Promise<void> {
         process.exit(1);
     }
 
-    const address = normalizeAddress(rawAddress);
+    const address = await normalizeAddress(rawAddress);
     if (!address) {
         console.error(
             `Error: '${rawAddress}' is not a valid OPNet address (expected 0x+64hex or bech32m).`,

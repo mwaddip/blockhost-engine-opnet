@@ -42,7 +42,7 @@ export async function executeWithdraw(
             'Cannot withdraw: server wallet not available',
         );
 
-    const toAddress = resolveAddress(toRole, book);
+    const toAddress = await resolveAddress(toRole, book);
     if (!toAddress)
         throw new Error(`Cannot resolve recipient '${toRole}'`);
 
