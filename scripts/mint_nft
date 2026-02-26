@@ -205,13 +205,16 @@ async function main(): Promise<void> {
 
     const signed = await factory.signInteraction(interactionParams);
 
-    // Broadcast
-    for (let i = 0; i < signed.transaction.length; i++) {
-        const label = i === 0 ? 'funding' : 'interaction';
-        console.error(`Broadcasting ${label} TX...`);
-        const result = await provider.sendRawTransaction(signed.transaction[i]);
-        console.error(`${label}: ${JSON.stringify(result)}`);
+    // Broadcast funding TX (if present), then interaction TX
+    if (signed.fundingTransaction) {
+        console.error('Broadcasting funding TX...');
+        const fundResult = await provider.sendRawTransaction(signed.fundingTransaction);
+        console.error(`funding: ${JSON.stringify(fundResult)}`);
     }
+
+    console.error('Broadcasting interaction TX...');
+    const intResult = await provider.sendRawTransaction(signed.interactionTransaction);
+    console.error(`interaction: ${JSON.stringify(intResult)}`);
 
     console.error(`NFT minted! Token ID: ${tokenId}`);
     // stdout: just the token ID for machine consumption

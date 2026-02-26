@@ -101,17 +101,19 @@ async function main(): Promise<void> {
     const interaction = await factory.signInteraction(interactionParams);
     console.log('Interaction signed, broadcasting...');
 
-    // Broadcast funding TX
-    console.log('Broadcasting funding TX...');
-    const fundingResult = await provider.sendRawTransaction(
-        interaction.transaction[0],
-    );
-    console.log('Funding:', JSON.stringify(fundingResult));
+    // Broadcast funding TX (if present)
+    if (interaction.fundingTransaction) {
+        console.log('Broadcasting funding TX...');
+        const fundingResult = await provider.sendRawTransaction(
+            interaction.fundingTransaction,
+        );
+        console.log('Funding:', JSON.stringify(fundingResult));
+    }
 
     // Broadcast interaction TX
     console.log('Broadcasting interaction TX...');
     const interactionResult = await provider.sendRawTransaction(
-        interaction.transaction[1],
+        interaction.interactionTransaction,
     );
     console.log('Interaction:', JSON.stringify(interactionResult));
 
