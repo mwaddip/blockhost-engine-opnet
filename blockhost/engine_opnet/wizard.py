@@ -1256,10 +1256,9 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
             except FileNotFoundError:
                 pass
 
-        # Mint NFT #0 via CLI
+        # Mint NFT #0 via CLI — deployer's own OPNet address is the owner
         cmd = [
             "blockhost-mint-nft",
-            "--owner-wallet", admin_wallet,
         ]
         if user_encrypted:
             cmd.extend(["--user-encrypted", user_encrypted])

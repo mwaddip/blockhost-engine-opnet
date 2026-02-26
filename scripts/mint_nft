@@ -18,7 +18,6 @@
  */
 
 import { readFileSync } from 'fs';
-import { createHash } from 'crypto';
 import * as yaml from 'js-yaml';
 import {
     AddressTypes,
@@ -29,7 +28,7 @@ import {
 } from '@btc-vision/transaction';
 import { getContract, JSONRpcProvider } from 'opnet';
 import { Address } from '@btc-vision/transaction';
-import { address as btcAddress, networks } from '@btc-vision/bitcoin';
+import { networks } from '@btc-vision/bitcoin';
 import {
     ACCESS_CREDENTIAL_NFT_ABI,
     type IAccessCredentialNFT,
@@ -67,11 +66,8 @@ function parseArgs(): Args {
         }
     }
 
-    if (!ownerWallet) {
-        console.error('Required: --owner-wallet 0x<64 hex chars>');
-        process.exit(1);
-    }
-    if (!/^0x[0-9a-fA-F]{64}$/.test(ownerWallet)) {
+    // ownerWallet is optional — if not provided, defaults to deployer's own address
+    if (ownerWallet && !/^0x[0-9a-fA-F]{64}$/.test(ownerWallet)) {
         console.error('--owner-wallet must be 0x + 64 hex characters (32-byte OPNet address)');
         process.exit(1);
     }
@@ -119,14 +115,6 @@ function inferNetwork(rpcUrl: string) {
     return networks.opnetTestnet;
 }
 
-function walletToOpnetAddress(p2tr: string, mldsaPublicKey: Uint8Array): Address {
-    // mldsaHash = SHA256(ML-DSA public key) — this is the OPNet address (P2OP)
-    const mldsaHash = '0x' + createHash('sha256').update(Buffer.from(mldsaPublicKey)).digest('hex');
-    // tweakedPubkey = 0x02 || x-only tweaked key decoded from P2TR bech32m
-    const decoded = btcAddress.fromBech32(p2tr);
-    const tweakedPubkey = '0x02' + Buffer.from(decoded.data).toString('hex');
-    return Address.fromString(mldsaHash, tweakedPubkey);
-}
 
 async function main(): Promise<void> {
     const { ownerWallet, userEncrypted, dryRun } = parseArgs();
@@ -147,21 +135,22 @@ async function main(): Promise<void> {
     console.error(`Deployer: ${wallet.p2tr}`);
 
     // Resolve owner wallet to Address object
-    const ownerAddress = Address.fromString(ownerWallet);
+    // If --owner-wallet not provided, default to deployer's own OPNet address
+    const ownerAddress = ownerWallet ? Address.fromString(ownerWallet) : wallet.address;
+    const ownerHex = ownerAddress.toHex();
 
     // Get contract instance for simulation
-    const deployerAddress = walletToOpnetAddress(wallet.p2tr, wallet.mldsaKeypair.publicKey);
     const contract = getContract<IAccessCredentialNFT>(
         nftContractAddr,
         ACCESS_CREDENTIAL_NFT_ABI,
         provider,
         network,
-        deployerAddress,
+        wallet.address,
     );
 
     // Simulate the mint call
-    console.error(`Minting NFT to ${ownerWallet}...`);
-    const sim = await contract.mint(ownerAddress, userEncrypted || '');
+    console.error(`Minting NFT to ${ownerHex}...`);
+    const sim = await contract.mint(ownerAddress as Address, userEncrypted || '');
 
     if ('error' in sim) {
         console.error(`Simulation failed: ${sim.error}`);
