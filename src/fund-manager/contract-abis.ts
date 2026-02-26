@@ -149,10 +149,6 @@ export const ACCESS_CREDENTIAL_NFT_ABI: BitcoinInterfaceAbi = [
             { name: 'from', type: ABI.ADDRESS },
             { name: 'to', type: ABI.ADDRESS },
             { name: 'tokenId', type: ABI.UINT256 },
-            { name: 'operator', type: ABI.ADDRESS },
-            { name: 'from', type: ABI.ADDRESS },
-            { name: 'to', type: ABI.ADDRESS },
-            { name: 'amount', type: ABI.UINT256 },
         ],
     },
 ];
