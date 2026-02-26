@@ -209,12 +209,53 @@ async function main(): Promise<void> {
     if (signed.fundingTransaction) {
         console.error('Broadcasting funding TX...');
         const fundResult = await provider.sendRawTransaction(signed.fundingTransaction);
+        if ('error' in fundResult) {
+            console.error(`Funding TX rejected: ${JSON.stringify(fundResult)}`);
+            await provider.close();
+            process.exit(1);
+        }
         console.error(`funding: ${JSON.stringify(fundResult)}`);
     }
 
     console.error('Broadcasting interaction TX...');
     const intResult = await provider.sendRawTransaction(signed.interactionTransaction);
-    console.error(`interaction: ${JSON.stringify(intResult)}`);
+    if ('error' in intResult) {
+        console.error(`Interaction TX rejected: ${JSON.stringify(intResult)}`);
+        await provider.close();
+        process.exit(1);
+    }
+    const txHash = String(intResult.result ?? intResult);
+    console.error(`interaction tx: ${txHash}`);
+
+    // Wait for the transaction to be mined before declaring success.
+    // The broadcast being accepted does NOT mean the NFT exists on-chain.
+    console.error('Waiting for mining confirmation...');
+    const POLL_MS = 4_000;
+    const TIMEOUT_MS = 60 * 60_000; // 60 minutes
+    let elapsed = 0;
+    let confirmed = false;
+
+    while (elapsed < TIMEOUT_MS) {
+        try {
+            const tx = await provider.getTransaction(txHash);
+            if (tx) {
+                console.error(`Confirmed in block. TX: ${txHash}`);
+                confirmed = true;
+                break;
+            }
+        } catch {
+            // not mined yet
+        }
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        elapsed += POLL_MS;
+    }
+
+    if (!confirmed) {
+        console.error(`TX broadcast but NOT confirmed after ${TIMEOUT_MS / 1000}s: ${txHash}`);
+        console.error('The NFT may not have been minted. Check the transaction manually.');
+        await provider.close();
+        process.exit(1);
+    }
 
     console.error(`NFT minted! Token ID: ${tokenId}`);
     // stdout: just the token ID for machine consumption
