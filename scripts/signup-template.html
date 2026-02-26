@@ -848,6 +848,13 @@
             return;
         }
 
+        // Wait for the module script (CDN) to finish loading window.OPNet
+        if (!window.OPNet) {
+            await new Promise(function(resolve) {
+                window.addEventListener('ecies-ready', resolve, { once: true });
+            });
+        }
+
         document.getElementById('servers-not-connected').classList.add('hidden');
         document.getElementById('servers-loading').classList.remove('hidden');
         document.getElementById('servers-list').classList.add('hidden');
