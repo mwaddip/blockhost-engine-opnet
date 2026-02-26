@@ -189,6 +189,7 @@ async function main(): Promise<void> {
     const interactionParams: IInteractionParameters = {
         from: wallet.p2tr,
         to: nftContractAddr,
+        contract: nftContractAddr,
         utxos: utxos,
         signer: wallet.keypair,
         mldsaSigner: wallet.mldsaKeypair,
