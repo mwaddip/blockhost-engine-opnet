@@ -104,6 +104,10 @@
                             <button type="button" class="btn btn-small btn-secondary" onclick="checkBalance()" id="check-balance-btn">
                                 Refresh
                             </button>
+                            <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--text-muted); cursor: pointer; user-select: none;">
+                                <input type="checkbox" id="balance-sound-chk" style="width: auto; margin: 0;">
+                                Ping on funded
+                            </label>
                         </div>
                         <p class="text-muted mt-1" style="font-size: 0.75rem;" id="balance-hint">
                             Fund this wallet with BTC to continue. Use OPWallet below or send BTC to the P2TR address above.
@@ -465,6 +469,24 @@ function showCopySuccess(btn) {
     setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
 }
 
+// Balance ping (Web Audio API — no asset required)
+function playBalancePing() {
+    try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.5);
+    } catch(e) {}
+}
+
 // Balance checking
 var balancePollingInterval = null;
 var currentBalance = 0;
@@ -487,6 +509,7 @@ function checkBalance() {
             if (currentBalance > 0) {
                 document.getElementById('balance-hint').textContent = 'Wallet funded! You can proceed with contract deployment.';
                 document.getElementById('balance-hint').style.color = 'var(--success)';
+                if (document.getElementById('balance-sound-chk').checked) playBalancePing();
                 stopBalancePolling();
             }
             updateContinueButton();
