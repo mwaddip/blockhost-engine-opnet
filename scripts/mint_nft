@@ -28,7 +28,7 @@ import {
 } from '@btc-vision/transaction';
 import { getContract, JSONRpcProvider } from 'opnet';
 import { Address } from '@btc-vision/transaction';
-import { networks } from '@btc-vision/bitcoin';
+import { address as btcAddress, networks } from '@btc-vision/bitcoin';
 import {
     ACCESS_CREDENTIAL_NFT_ABI,
     type IAccessCredentialNFT,
@@ -118,6 +118,12 @@ function inferNetwork(rpcUrl: string) {
     return networks.opnetTestnet;
 }
 
+function p2trToOpnetAddress(p2tr: string): Address {
+    const decoded = btcAddress.fromBech32(p2tr);
+    const hex = '0x' + Buffer.from(decoded.data).toString('hex');
+    return Address.fromString(hex);
+}
+
 async function main(): Promise<void> {
     const { ownerWallet, userEncrypted, dryRun } = parseArgs();
     const mnemonicPhrase = loadMnemonic();
@@ -140,11 +146,13 @@ async function main(): Promise<void> {
     const ownerAddress = Address.fromString(ownerWallet);
 
     // Get contract instance for simulation
+    const deployerAddress = p2trToOpnetAddress(wallet.p2tr);
     const contract = getContract<IAccessCredentialNFT>(
         nftContractAddr,
         ACCESS_CREDENTIAL_NFT_ABI,
         provider,
         network,
+        deployerAddress,
     );
 
     // Simulate the mint call
