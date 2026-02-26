@@ -132,7 +132,11 @@ async function main(): Promise<void> {
             const mnemonic = generateMnemonic();
             const wallet = new Mnemonic(mnemonic, '', net, MLDSASecurityLevel.LEVEL2)
                 .deriveOPWallet(AddressTypes.P2TR, 0);
-            process.stdout.write(JSON.stringify({ mnemonic, address: wallet.p2tr }) + '\n');
+            process.stdout.write(JSON.stringify({
+                mnemonic,
+                address: wallet.p2tr,
+                internalAddress: wallet.address.toHex(),
+            }) + '\n');
             break;
         }
 
@@ -143,7 +147,10 @@ async function main(): Promise<void> {
             const net = resolveNetwork(flags.network || 'regtest');
             const wallet = new Mnemonic(mnemonic, '', net, MLDSASecurityLevel.LEVEL2)
                 .deriveOPWallet(AddressTypes.P2TR, 0);
-            process.stdout.write(JSON.stringify({ address: wallet.p2tr }) + '\n');
+            process.stdout.write(JSON.stringify({
+                address: wallet.p2tr,
+                internalAddress: wallet.address.toHex(),
+            }) + '\n');
             break;
         }
 

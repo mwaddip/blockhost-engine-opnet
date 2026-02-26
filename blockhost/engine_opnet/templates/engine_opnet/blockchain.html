@@ -95,6 +95,8 @@
                            value="{{ blockchain.get('deployer_mnemonic', '') }}">
                     <input type="hidden" name="deployer_address" id="deployer-address-hidden"
                            value="{{ blockchain.get('deployer_address', '') }}">
+                    <input type="hidden" name="deployer_internal_address" id="deployer-internal-address-hidden"
+                           value="{{ blockchain.get('deployer_internal_address', '') }}">
 
                     <!-- Balance check section -->
                     <div id="balance-section" style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 4px;">
@@ -407,6 +409,7 @@ function generateWallet() {
         document.getElementById('deployer-address').textContent = data.address;
         document.getElementById('deployer-mnemonic-hidden').value = data.mnemonic;
         document.getElementById('deployer-address-hidden').value = data.address;
+        document.getElementById('deployer-internal-address-hidden').value = data.internalAddress || '';
         document.getElementById('wallet-generated').classList.remove('hidden');
         btn.textContent = 'Regenerate';
 
@@ -595,6 +598,7 @@ function validateImportMnemonic() {
             // Store in hidden fields for form submission
             document.getElementById('deployer-mnemonic-hidden').value = data.mnemonic;
             document.getElementById('deployer-address-hidden').value = data.address;
+            document.getElementById('deployer-internal-address-hidden').value = data.internalAddress || '';
             // Show balance section
             document.getElementById('import-balance-section').classList.remove('hidden');
             checkImportedBalance();

@@ -119,6 +119,7 @@ def wizard_opnet():
             "wallet_mode": request.form.get("wallet_mode", "generate"),
             "deployer_mnemonic": request.form.get("deployer_mnemonic", "").strip(),
             "deployer_address": request.form.get("deployer_address", "").strip(),
+            "deployer_internal_address": request.form.get("deployer_internal_address", "").strip(),
             "contract_mode": request.form.get("contract_mode", "deploy"),
             "nft_contract": request.form.get("nft_contract", "").strip(),
             "subscription_contract": request.form.get(
@@ -186,6 +187,7 @@ def api_generate_wallet():
         return jsonify({
             "mnemonic": data["mnemonic"],
             "address": data["address"],
+            "internalAddress": data.get("internalAddress", ""),
         })
     except json.JSONDecodeError:
         return jsonify({"error": "Could not parse wallet output"}), 500
@@ -226,7 +228,11 @@ def api_validate_mnemonic():
 
         if result.returncode == 0 and result.stdout.strip():
             addr_data = json.loads(result.stdout.strip())
-            return jsonify({"address": addr_data["address"], "mnemonic": mnemonic_phrase})
+            return jsonify({
+                "address": addr_data["address"],
+                "internalAddress": addr_data.get("internalAddress", ""),
+                "mnemonic": mnemonic_phrase,
+            })
         else:
             return jsonify({"error": result.stderr.strip() or "Invalid mnemonic"}), 400
     except FileNotFoundError:
@@ -1340,35 +1346,46 @@ def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
         blockchain = config.get("blockchain", {})
         admin_wallet = config.get("admin_wallet", "")
 
-        deployer_address = blockchain.get("deployer_address", "")
+        # Addressbook needs 0x internal addresses, not bech32m P2OP addresses.
+        # Use deployer_internal_address (from keygen), falling back to bech32 decode.
+        deployer_internal = (
+            blockchain.get("deployer_internal_address", "")
+            or _bech32_to_opnet_address(blockchain.get("deployer_address", ""))
+            or ""
+        )
 
-        # Build addressbook entries
+        # Resolve admin_wallet to internal format if it's bech32m
+        admin_internal = admin_wallet
+        if admin_wallet and not admin_wallet.startswith("0x"):
+            admin_internal = _bech32_to_opnet_address(admin_wallet) or admin_wallet
+
+        # Build addressbook entries (0x internal addresses)
         addressbook: dict = {}
 
-        if admin_wallet:
-            addressbook["admin"] = {"address": admin_wallet}
+        if admin_internal:
+            addressbook["admin"] = {"address": admin_internal}
 
-        if deployer_address:
+        if deployer_internal:
             addressbook["server"] = {
-                "address": deployer_address,
+                "address": deployer_internal,
                 "keyfile": "/etc/blockhost/deployer.key",
             }
 
         if blockchain.get("revenue_share_dev"):
-            addressbook["dev"] = {"address": admin_wallet}
+            addressbook["dev"] = {"address": admin_internal}
 
         if blockchain.get("revenue_share_broker"):
-            addressbook["broker"] = {"address": admin_wallet}
+            addressbook["broker"] = {"address": admin_internal}
 
-        # Try ab --init CLI first
+        # Try ab --init CLI first (pass 0x internal addresses)
         ab_init_used = False
-        if admin_wallet and deployer_address:
+        if admin_internal and deployer_internal:
             try:
-                cmd = ["ab", "--init", admin_wallet, deployer_address]
+                cmd = ["ab", "--init", admin_internal, deployer_internal]
                 if blockchain.get("revenue_share_dev"):
-                    cmd.append(admin_wallet)
+                    cmd.append(admin_internal)
                 if blockchain.get("revenue_share_broker"):
-                    cmd.append(admin_wallet)
+                    cmd.append(admin_internal)
                 cmd.append("/etc/blockhost/deployer.key")
 
                 result = subprocess.run(
