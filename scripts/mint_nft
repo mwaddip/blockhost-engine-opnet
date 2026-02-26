@@ -115,8 +115,7 @@ function loadConfig(): { rpcUrl: string; nftContract: string } {
 
 function inferNetwork(rpcUrl: string) {
     if (rpcUrl.includes('mainnet')) return networks.bitcoin;
-    if (rpcUrl.includes('testnet')) return networks.testnet;
-    return networks.regtest;
+    return networks.opnetTestnet;
 }
 
 async function main(): Promise<void> {
@@ -125,7 +124,7 @@ async function main(): Promise<void> {
     const { rpcUrl, nftContract: nftContractAddr } = loadConfig();
     const network = inferNetwork(rpcUrl);
 
-    const provider = new JSONRpcProvider(rpcUrl, network);
+    const provider = new JSONRpcProvider({ url: rpcUrl, network });
 
     const mnemonic = new Mnemonic(
         mnemonicPhrase,
