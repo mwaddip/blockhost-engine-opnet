@@ -11,7 +11,7 @@
  *
  * Config:
  *   Reads NFT contract address + RPC URL from /etc/blockhost/web3-defaults.yaml
- *   Reads deployer mnemonic from OPNET_MNEMONIC env var or /etc/blockhost/deployer.mnemonic
+ *   Reads deployer mnemonic from OPNET_MNEMONIC env var or /etc/blockhost/deployer.key
  *
  * stdout: token ID on success
  * Exit: 0 = success, 1 = failure
@@ -35,7 +35,7 @@ import {
 } from '../src/fund-manager/contract-abis.js';
 
 const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
-const MNEMONIC_PATH = `${CONFIG_DIR}/deployer.mnemonic`;
+const MNEMONIC_PATH = `${CONFIG_DIR}/deployer.key`;
 
 interface Args {
     ownerWallet: string;

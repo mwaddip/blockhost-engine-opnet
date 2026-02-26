@@ -7,12 +7,12 @@
 #   blockhost-deploy-contracts pos      # deploy subscription (point-of-sale) contract only
 #
 # Environment:
-#   OPNET_MNEMONIC           Deployer mnemonic (or reads from deployer.mnemonic)
+#   OPNET_MNEMONIC           Deployer mnemonic (or reads from deployer.key)
 #   OPNET_RPC_URL            RPC endpoint (default: from web3-defaults.yaml or regtest)
 #   OPNET_PAYMENT_TOKEN      Payment token P2OP address (required for pos deployment)
 #
 # Config:
-#   /etc/blockhost/deployer.mnemonic   Deployer mnemonic phrase
+#   /etc/blockhost/deployer.key   Deployer mnemonic phrase
 #   /etc/blockhost/web3-defaults.yaml  RPC URL, contract addresses
 #
 # stdout: contract pubkey(s), one per line (0x-prefixed 32-byte hex)
@@ -40,7 +40,7 @@ esac
 
 # Load mnemonic from file if not in env
 if [ -z "${OPNET_MNEMONIC:-}" ]; then
-    MNEMONIC_FILE="$CONFIG_DIR/deployer.mnemonic"
+    MNEMONIC_FILE="$CONFIG_DIR/deployer.key"
     if [ ! -f "$MNEMONIC_FILE" ]; then
         echo "Error: Set OPNET_MNEMONIC or create $MNEMONIC_FILE" >&2
         exit 1
