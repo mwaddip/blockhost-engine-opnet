@@ -355,6 +355,9 @@ def api_block_info():
                         block_time = (
                             int(ts, 16) if isinstance(ts, str) else int(ts)
                         )
+                        # OPNet may return milliseconds — normalize to seconds
+                        if block_time > 1e12:
+                            block_time = block_time // 1000
                         break
         except Exception:
             pass
