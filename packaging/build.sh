@@ -341,6 +341,27 @@ else
     echo "WARNING: Failed to bundle mint_nft CLI"
 fi
 
+# Bundle keygen helper (used by root agent wallet action)
+echo "Bundling keygen helper with esbuild..."
+npx esbuild "$PROJECT_DIR/scripts/keygen.ts" \
+    --bundle \
+    --platform=node \
+    --target=node22 \
+    --format=esm \
+    --minify \
+    --banner:js='import{createRequire}from"module";const require=createRequire(import.meta.url);' \
+    --outfile="$PKG_DIR/usr/share/blockhost/keygen.js"
+
+if [ -f "$PKG_DIR/usr/share/blockhost/keygen.js" ]; then
+    echo "  keygen.js ($(du -h "$PKG_DIR/usr/share/blockhost/keygen.js" | cut -f1))"
+else
+    echo "WARNING: Failed to bundle keygen.js"
+fi
+
+# Install engine root agent action plugins
+mkdir -p "$PKG_DIR/usr/share/blockhost/root-agent-actions"
+cp "$PROJECT_DIR/root-agent-actions/wallet.py" "$PKG_DIR/usr/share/blockhost/root-agent-actions/"
+
 # Install engine wizard plugin (Python module + templates)
 WIZARD_SRC="$PROJECT_DIR/blockhost/engine_opnet"
 WIZARD_DST="$PKG_DIR/usr/lib/python3/dist-packages/blockhost/engine_opnet"
