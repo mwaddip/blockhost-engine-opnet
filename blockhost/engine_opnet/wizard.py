@@ -729,6 +729,19 @@ def get_post_finalization_steps() -> list[tuple]:
 # ---------------------------------------------------------------------------
 
 
+def _read_rpc_url_from_config() -> str:
+    """Read RPC URL from web3-defaults.yaml (fallback when session config is empty)."""
+    try:
+        import yaml
+        web3_path = CONFIG_DIR / "web3-defaults.yaml"
+        if web3_path.exists():
+            data = yaml.safe_load(web3_path.read_text()) or {}
+            return data.get("blockchain", {}).get("rpc_url", "")
+    except Exception:
+        pass
+    return ""
+
+
 def _set_blockhost_ownership(path, mode=0o640):
     """Set file to root:blockhost with given mode."""
     try:
@@ -1292,11 +1305,14 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
 
         # blockhost-mint-nft requires 0x + 64 hex (OPNet internal address).
         # The wallet page submits a bech32m P2TR address — convert if needed.
-        rpc_url = blockchain.get("rpc_url", "")
         if not admin_wallet.startswith("0x"):
+            rpc_url = blockchain.get("rpc_url", "") or _read_rpc_url_from_config()
             resolved = _bech32_to_opnet_address(admin_wallet, rpc_url)
             if not resolved:
-                return False, f"Could not resolve admin wallet to OPNet internal address: {admin_wallet}"
+                return False, (
+                    f"Could not resolve admin wallet to OPNet internal address: {admin_wallet}"
+                    f" (rpc_url={'<empty>' if not rpc_url else rpc_url})"
+                )
             admin_wallet = resolved
 
         # Build encrypted connection details for the NFT
@@ -1446,7 +1462,7 @@ def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
 
         # Addressbook needs 0x internal addresses, not bech32m P2OP addresses.
         # Use deployer_internal_address (from keygen), falling back to RPC resolution.
-        rpc_url = blockchain.get("rpc_url", "")
+        rpc_url = blockchain.get("rpc_url", "") or _read_rpc_url_from_config()
         deployer_internal = (
             blockchain.get("deployer_internal_address", "")
             or _bech32_to_opnet_address(blockchain.get("deployer_address", ""), rpc_url)
