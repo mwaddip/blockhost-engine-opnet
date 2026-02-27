@@ -931,7 +931,7 @@ def finalize_contracts(config: dict) -> tuple[bool, Optional[str]]:
             [str(deploy_script)],
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=3720,  # 62 min — each deploy waits for mining confirmation
             env=env,
         )
 
@@ -1293,7 +1293,7 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=3720,  # 62 min — script waits up to 60 min for mining confirmation
         )
 
         if result.returncode != 0:
@@ -1307,7 +1307,7 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
         }
         return True, None
     except subprocess.TimeoutExpired:
-        return False, "NFT minting timed out"
+        return False, "NFT minting timed out (waited for mining confirmation)"
     except Exception as e:
         return False, str(e)
 
@@ -1328,7 +1328,7 @@ def finalize_plan(config: dict) -> tuple[bool, Optional[str]]:
                 ["bw", "config", "stable", payment_token],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=3720,  # 62 min — waits for mining confirmation
                 env=env,
             )
             if result.returncode != 0:
@@ -1339,7 +1339,7 @@ def finalize_plan(config: dict) -> tuple[bool, Optional[str]]:
             ["bw", "plan", "create", plan_name, str(plan_price)],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=3720,  # 62 min — waits for mining confirmation
             env=env,
         )
 
@@ -1354,7 +1354,7 @@ def finalize_plan(config: dict) -> tuple[bool, Optional[str]]:
     except FileNotFoundError:
         return False, "bw CLI not found"
     except subprocess.TimeoutExpired:
-        return False, "Plan creation timed out"
+        return False, "Plan creation timed out (waited for mining confirmation)"
     except Exception as e:
         return False, str(e)
 

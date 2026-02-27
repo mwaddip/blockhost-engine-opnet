@@ -16,7 +16,7 @@ import {
     BLOCKHOST_SUBSCRIPTIONS_ABI,
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
-import { sendSigned } from '../../fund-manager/token-utils.js';
+import { sendSigned, waitForConfirmation } from '../../fund-manager/token-utils.js';
 
 export async function planCommand(
     args: string[],
@@ -87,7 +87,15 @@ export async function planCommand(
         process.exit(1);
     }
 
-    const result = await sendSigned(sim, serverWallet, network);
+    const result = await sendSigned(sim, serverWallet, network) as { transactionId?: string };
+    const txHash = result?.transactionId;
+
+    if (txHash) {
+        console.error(`TX broadcast: ${txHash}`);
+        console.error('Waiting for mining confirmation...');
+        await waitForConfirmation(provider, txHash);
+        console.error('Confirmed.');
+    }
 
     // Extract plan ID from the simulation result properties
     if (sim.properties.planId !== undefined) {

@@ -9,6 +9,7 @@ import {
 } from '@btc-vision/transaction';
 import { JSONRpcProvider } from 'opnet';
 import { networks } from '@btc-vision/bitcoin';
+import { waitForConfirmation } from '../../src/fund-manager/token-utils.js';
 
 const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://testnet.opnet.org';
 const network = RPC_URL.includes('mainnet')
@@ -100,14 +101,30 @@ async function main(): Promise<void> {
     const fundingResult = await provider.sendRawTransaction(
         deployment.transaction[0],
     );
-    console.log('Funding result:', JSON.stringify(fundingResult));
+    if ('error' in fundingResult) {
+        console.error('Funding TX rejected:', JSON.stringify(fundingResult));
+        await provider.close();
+        process.exit(1);
+    }
+    const fundingHash = String(fundingResult.result ?? fundingResult);
+    console.log('Funding TX:', fundingHash);
 
     // Broadcast reveal transaction
     console.log('Broadcasting reveal TX...');
     const revealResult = await provider.sendRawTransaction(
         deployment.transaction[1],
     );
-    console.log('Reveal result:', JSON.stringify(revealResult));
+    if ('error' in revealResult) {
+        console.error('Reveal TX rejected:', JSON.stringify(revealResult));
+        await provider.close();
+        process.exit(1);
+    }
+    const revealHash = String(revealResult.result ?? revealResult);
+    console.log('Reveal TX:', revealHash);
+
+    // Wait for reveal TX to be confirmed before declaring success
+    console.log('Waiting for mining confirmation...');
+    await waitForConfirmation(provider, revealHash);
 
     console.log('\nNFT deployment complete!');
     console.log('Contract:', deployment.contractAddress);

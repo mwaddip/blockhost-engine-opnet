@@ -17,7 +17,7 @@ import {
     type IBlockhostSubscriptions,
 } from '../../fund-manager/contract-abis.js';
 import { loadWeb3Config } from '../../fund-manager/web3-config.js';
-import { ZERO_ADDRESS, sendSigned } from '../../fund-manager/token-utils.js';
+import { ZERO_ADDRESS, sendSigned, waitForConfirmation } from '../../fund-manager/token-utils.js';
 
 export async function configCommand(
     args: string[],
@@ -93,7 +93,15 @@ export async function configCommand(
         process.exit(1);
     }
 
-    await sendSigned(sim, serverWallet, network);
+    const receipt = await sendSigned(sim, serverWallet, network) as { transactionId?: string };
+    const txHash = receipt?.transactionId;
+
+    if (txHash) {
+        console.error(`TX broadcast: ${txHash}`);
+        console.error('Waiting for mining confirmation...');
+        await waitForConfirmation(provider, txHash);
+        console.error('Confirmed.');
+    }
 
     console.log(address);
 }

@@ -18,6 +18,38 @@ import type { TokenBalance } from './types.js';
 /** Maximum satoshis a single contract interaction may spend on fees. */
 export const MAX_SAT_TO_SPEND = 100_000n;
 
+/**
+ * Poll until a transaction is confirmed in a block.
+ *
+ * @param provider - OPNet RPC provider
+ * @param txHash - Transaction hash to track
+ * @param timeoutMs - Max wait time (default 60 minutes)
+ * @param pollMs - Poll interval (default 4 seconds)
+ * @returns The confirmed transaction object
+ * @throws If the transaction is not confirmed within the timeout
+ */
+export async function waitForConfirmation(
+    provider: JSONRpcProvider,
+    txHash: string,
+    timeoutMs = 60 * 60_000,
+    pollMs = 4_000,
+): Promise<unknown> {
+    let elapsed = 0;
+    while (elapsed < timeoutMs) {
+        try {
+            const tx = await provider.getTransaction(txHash);
+            if (tx) return tx;
+        } catch {
+            // not mined yet
+        }
+        await new Promise((r) => setTimeout(r, pollMs));
+        elapsed += pollMs;
+    }
+    throw new Error(
+        `Transaction ${txHash} not confirmed after ${Math.round(timeoutMs / 1000)}s`,
+    );
+}
+
 /** OPNet zero address (32 bytes, 0x-prefixed). */
 export const ZERO_ADDRESS =
     '0x0000000000000000000000000000000000000000000000000000000000000000';
