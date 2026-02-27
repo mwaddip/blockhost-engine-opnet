@@ -1143,29 +1143,26 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
 # ---------------------------------------------------------------------------
 
 
-def _bech32_to_opnet_address(address: str) -> Optional[str]:
-    """Convert a P2TR bech32m address to 0x-prefixed 32-byte OPNet address.
+def _bech32_decode_witness(address: str) -> Optional[tuple[str, bytes]]:
+    """Decode a bech32m address into (hrp, witness_program).
 
-    The witness program of a P2TR address is the 32-byte x-only tweaked pubkey,
-    which is the OPNet internal address. No RPC needed — pure bech32 decode.
-    Returns None if not a valid P2TR address.
+    Returns None if not a valid witness v1 address with 32-byte program.
     """
     try:
         import segwit_addr  # type: ignore[import]
-        _, witness_version, witness_program = segwit_addr.decode(None, address)
+        hrp, witness_version, witness_program = segwit_addr.decode(None, address)
         if witness_version == 1 and len(witness_program) == 32:
-            return "0x" + bytes(witness_program).hex()
+            return (hrp or "", bytes(witness_program))
     except Exception:
         pass
-    # Fallback: manual bech32m decode using Python standard library
+    # Fallback: manual bech32m decode
     try:
-        from hashlib import sha256 as _  # noqa — just checking stdlib available
-        # bech32m charset
         CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
         addr = address.lower()
         sep = addr.rfind("1")
         if sep < 1:
             return None
+        hrp = addr[:sep]
         data_chars = addr[sep + 1:]
         decoded = []
         for c in data_chars:
@@ -1184,7 +1181,7 @@ def _bech32_to_opnet_address(address: str) -> Optional[str]:
         # Convert from 5-bit groups to 8-bit bytes
         bits = 0
         value = 0
-        result = []
+        result: list[int] = []
         for v in decoded[1:]:
             value = (value << 5) | v
             bits += 5
@@ -1192,10 +1189,89 @@ def _bech32_to_opnet_address(address: str) -> Optional[str]:
                 bits -= 8
                 result.append((value >> bits) & 0xFF)
         if len(result) == 32:
-            return "0x" + bytes(result).hex()
+            return (hrp, bytes(result))
     except Exception:
         pass
     return None
+
+
+# OPNet P2OP HRPs — witness program is ML-DSA hash, NOT tweaked pubkey.
+_P2OP_HRPS = {"op", "opt", "opr"}
+
+
+def _resolve_mldsa_via_rpc(witness_hex: str, rpc_url: str) -> Optional[str]:
+    """Resolve a P2OP witness program to the on-chain identity via RPC.
+
+    The RPC returns a nested object keyed by address, containing:
+      - tweakedPubkey: the witness program (what we already have)
+      - mldsaHashedPublicKey: the on-chain identity (what we need)
+    """
+    try:
+        import urllib.request
+        api_url = rpc_url.rstrip("/")
+        if "/api/v1/json-rpc" not in api_url:
+            api_url += "/api/v1/json-rpc"
+        payload = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "btc_publicKeyInfo",
+            "params": [[witness_hex]],
+            "id": 1,
+        }).encode()
+        req = urllib.request.Request(
+            api_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read())
+        result = body.get("result", {})
+        # Result is keyed by the address we sent
+        info = result.get(witness_hex, {})
+        if isinstance(info, dict):
+            mldsa_hash = info.get("mldsaHashedPublicKey", "")
+            if mldsa_hash and re.match(r"^[0-9a-fA-F]{64}$", mldsa_hash):
+                resolved = "0x" + mldsa_hash
+                if resolved.lower() != witness_hex.lower():
+                    return resolved
+        print(
+            "WARNING: P2OP address not yet indexed on RPC. The wallet must have at "
+            "least one on-chain transaction before it can be resolved.",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"WARNING: Failed to resolve P2OP address via RPC: {e}", flush=True)
+    return None
+
+
+def _bech32_to_opnet_address(address: str, rpc_url: str = "") -> Optional[str]:
+    """Convert a bech32m address to 0x-prefixed 32-byte OPNet internal address.
+
+    For standard P2TR (bc1p/tb1p/bcrt1p), the witness program IS the tweaked
+    pubkey — extracted directly.
+
+    For OPNet P2OP (op1p/opt1p/opr1p), the witness program is the ML-DSA key
+    hash. These must be resolved via RPC to get the actual on-chain identity.
+    """
+    decoded = _bech32_decode_witness(address)
+    if decoded is None:
+        return None
+
+    hrp, witness_program = decoded
+    hex_addr = "0x" + witness_program.hex()
+
+    if hrp in _P2OP_HRPS:
+        # P2OP: witness program is ML-DSA hash — resolve via RPC
+        if not rpc_url:
+            print(
+                "WARNING: Cannot resolve P2OP address without RPC URL. "
+                "Use 0x internal address directly.",
+                flush=True,
+            )
+            return None
+        return _resolve_mldsa_via_rpc(hex_addr, rpc_url)
+
+    # Standard P2TR: witness program is the tweaked pubkey
+    return hex_addr
 
 
 def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
@@ -1216,10 +1292,11 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
 
         # blockhost-mint-nft requires 0x + 64 hex (OPNet internal address).
         # The wallet page submits a bech32m P2TR address — convert if needed.
+        rpc_url = blockchain.get("rpc_url", "")
         if not admin_wallet.startswith("0x"):
-            resolved = _bech32_to_opnet_address(admin_wallet)
+            resolved = _bech32_to_opnet_address(admin_wallet, rpc_url)
             if not resolved:
-                return False, f"--owner-wallet must be 0x + 64 hex characters (32-byte OPNet address), got: {admin_wallet}"
+                return False, f"Could not resolve admin wallet to OPNet internal address: {admin_wallet}"
             admin_wallet = resolved
 
         # Build encrypted connection details for the NFT
@@ -1282,9 +1359,10 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
             except FileNotFoundError:
                 pass
 
-        # Mint NFT #0 via CLI — deployer's own OPNet address is the owner
+        # Mint NFT via CLI — admin wallet is the owner
         cmd = [
             "blockhost-mint-nft",
+            "--owner-wallet", admin_wallet,
         ]
         if user_encrypted:
             cmd.extend(["--user-encrypted", user_encrypted])
@@ -1367,17 +1445,18 @@ def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
         admin_wallet = config.get("admin_wallet", "")
 
         # Addressbook needs 0x internal addresses, not bech32m P2OP addresses.
-        # Use deployer_internal_address (from keygen), falling back to bech32 decode.
+        # Use deployer_internal_address (from keygen), falling back to RPC resolution.
+        rpc_url = blockchain.get("rpc_url", "")
         deployer_internal = (
             blockchain.get("deployer_internal_address", "")
-            or _bech32_to_opnet_address(blockchain.get("deployer_address", ""))
+            or _bech32_to_opnet_address(blockchain.get("deployer_address", ""), rpc_url)
             or ""
         )
 
         # Resolve admin_wallet to internal format if it's bech32m
         admin_internal = admin_wallet
         if admin_wallet and not admin_wallet.startswith("0x"):
-            admin_internal = _bech32_to_opnet_address(admin_wallet) or admin_wallet
+            admin_internal = _bech32_to_opnet_address(admin_wallet, rpc_url) or admin_wallet
 
         # Build addressbook entries (0x internal addresses)
         addressbook: dict = {}
