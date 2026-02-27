@@ -319,7 +319,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{{ url_for('engine_opnet.static', filename='topup.js') }}"></script>
 <script>
 // Toggle revenue sharing details
 function toggleRevenueShare() {
@@ -641,7 +640,7 @@ function checkImportedBalance() {
     });
 }
 
-// Top up deployer wallet via OPWallet (TransactionFactory + null signers)
+// Top up deployer wallet via OPWallet native sendBitcoin API
 function topUpWallet(mode) {
     var deployerAddr = mode === 'generate' ? window.generatedAddress : window.importedAddress;
     var amountInput = document.getElementById(mode === 'generate' ? 'topup-amount' : 'import-topup-amount');
@@ -651,24 +650,34 @@ function topUpWallet(mode) {
     var sats = parseInt(amountInput.value);
     if (!deployerAddr) { statusEl.textContent = 'No deployer address'; return; }
     if (!sats || sats <= 0) { statusEl.textContent = 'Enter an amount in sats'; return; }
-    if (!window.opnet) { statusEl.textContent = 'OPWallet not detected — install the browser extension'; return; }
+    if (!window.opnet || !window.opnet.web3) {
+        statusEl.textContent = 'OPWallet not detected — install the browser extension';
+        return;
+    }
 
     btn.disabled = true;
     statusEl.textContent = 'Confirm in OPWallet popup...';
 
-    var rpcUrl = document.getElementById('rpc_url').value;
-    var networkName = document.getElementById('network').value;
-    if (networkName === 'custom') networkName = 'testnet';
-
-    topup.sendBTC(rpcUrl, networkName, deployerAddr, sats)
+    // OPWallet v1.8.2+ handles UTXOs, fees, signing, and broadcasting natively.
+    window.opnet.requestAccounts()
+    .then(function(accounts) {
+        if (!accounts.length) throw new Error('No accounts from OPWallet');
+        return window.opnet.web3.sendBitcoin({
+            from: accounts[0],
+            to: deployerAddr,
+            amount: BigInt(sats),
+            feeRate: 0,
+            priorityFee: 0n,
+            utxos: []
+        });
+    })
     .then(function(result) {
-        console.log('[topUp] txid:', result.txid, 'fee:', result.fee);
+        console.log('[topUp] txid:', result.tx, 'fee:', result.estimatedFees.toString());
         btn.disabled = false;
-        showConfirmationTracker(result.txid, mode);
+        showConfirmationTracker(result.tx, mode);
     })
     .catch(function(e) {
         console.warn('[topUp] error:', e);
-        console.log('[topUp] stack:', e.stack);
         btn.disabled = false;
         if (e.code === 4001) {
             statusEl.textContent = 'Transaction rejected by user.';
