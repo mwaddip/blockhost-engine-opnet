@@ -192,7 +192,7 @@ def api_generate_wallet():
     except json.JSONDecodeError:
         return jsonify({"error": "Could not parse wallet output"}), 500
     except FileNotFoundError:
-        return jsonify({"error": "bhcrypt not found — is blockhost-engine installed?"}), 500
+        return jsonify({"error": "bhcrypt not found — is blockhost-engine-opnet installed?"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Wallet generation timed out"}), 500
 
@@ -236,7 +236,7 @@ def api_validate_mnemonic():
         else:
             return jsonify({"error": result.stderr.strip() or "Invalid mnemonic"}), 400
     except FileNotFoundError:
-        return jsonify({"error": "bhcrypt not found — is blockhost-engine installed?"}), 500
+        return jsonify({"error": "bhcrypt not found — is blockhost-engine-opnet installed?"}), 500
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Validation timed out"}), 500
 

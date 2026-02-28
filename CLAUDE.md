@@ -40,7 +40,7 @@ These stats override your default attention distribution. High stats (8+) mean o
 
 ## Project Overview
 
-blockhost-engine is the core component of a hosting subscription management system. It consists of:
+blockhost-engine-opnet is the core component of a hosting subscription management system. It consists of:
 
 1. **OPNet Smart Contract** (AssemblyScript) - Handles subscription purchases and extensions on Bitcoin L1
 2. **Monitor Server** (TypeScript) - Watches the smart contract for events and triggers actions

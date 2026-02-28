@@ -61,8 +61,8 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/mwaddip/blockhost-engine.git
-cd blockhost-engine
+git clone https://github.com/mwaddip/blockhost-engine-opnet.git
+cd blockhost-engine-opnet
 npm install
 ```
 

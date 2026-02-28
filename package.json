@@ -1,5 +1,5 @@
 {
-  "name": "blockhost-engine",
+  "name": "blockhost-engine-opnet",
   "version": "0.1.0",
   "type": "module",
   "description": "Subscription management system with OPNet smart contracts and monitoring server",
