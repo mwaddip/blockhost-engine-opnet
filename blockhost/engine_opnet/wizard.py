@@ -9,6 +9,7 @@ Provides:
 """
 
 import grp
+import ipaddress
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from flask import (
     Blueprint,
@@ -73,6 +75,26 @@ def _rpc_url(base_url: str) -> str:
     if "api/v1/json-rpc" in url:
         return url
     return url + RPC_PATH
+
+
+def validate_rpc_url(url: str) -> bool:
+    """Validate that an RPC URL is a safe, non-internal HTTP(S) endpoint."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            return False
+    except ValueError:
+        pass  # domain name, not IP — allow
+    return True
 
 
 # OPNet internal addresses: 0x + 64 hex (32-byte)
@@ -249,6 +271,8 @@ def api_balance():
 
     if not address or not rpc_url:
         return jsonify({"error": "address and rpc_url required"}), 400
+    if not validate_rpc_url(rpc_url):
+        return jsonify({"error": "Invalid RPC URL"}), 400
 
     import urllib.request
     import urllib.error
@@ -285,8 +309,8 @@ def api_balance():
             "balance_btc": f"{balance_btc:.8f}",
             "has_funds": balance_sats > 0,
         })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "RPC request failed"}), 502
 
 
 @blueprint.route("/api/blockchain/block-info")
@@ -295,6 +319,8 @@ def api_block_info():
     rpc_url = request.args.get("rpc_url", "").strip()
     if not rpc_url:
         return jsonify({"error": "rpc_url required"}), 400
+    if not validate_rpc_url(rpc_url):
+        return jsonify({"error": "Invalid RPC URL"}), 400
 
     import urllib.request
     import time
@@ -368,8 +394,8 @@ def api_block_info():
             result["block_age_secs"] = int(time.time()) - block_time
 
         return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "RPC request failed"}), 502
 
 
 @blueprint.route("/api/blockchain/tx-status")
@@ -380,6 +406,8 @@ def api_tx_status():
 
     if not txid or not rpc_url:
         return jsonify({"error": "txid and rpc_url required"}), 400
+    if not validate_rpc_url(rpc_url):
+        return jsonify({"error": "Invalid RPC URL"}), 400
 
     import urllib.request
 
@@ -424,6 +452,8 @@ def api_deploy():
 
     if not deployer_mnemonic or not rpc_url:
         return jsonify({"error": "deployer_mnemonic and rpc_url required"}), 400
+    if not validate_rpc_url(rpc_url):
+        return jsonify({"error": "Invalid RPC URL"}), 400
     if not payment_token:
         return jsonify({"error": "payment_token required for subscription contract deployment"}), 400
 
