@@ -55,37 +55,31 @@ The engine discovers provisioner commands via a manifest file. VMs are identifie
 - `blockhost-common` package (shared configuration)
 - A provisioner package (e.g. `blockhost-provisioner-proxmox`) with a manifest
 
-## Quick Start
+## Development Setup
+
+This is a component of the BlockHost system — it's installed via `packaging/build.sh` as part of a full deployment. For local development:
 
 ```bash
-# Clone and install
 git clone https://github.com/mwaddip/blockhost-engine-opnet.git
 cd blockhost-engine-opnet
 npm install
-
-# Configure
-cp examples/env.example .env
-# Edit .env with your deployer private key and RPC URL
-
-# Deploy contracts
-blockhost-deploy-contracts both
-
-# Initialize server
-sudo ./scripts/init-server.sh
-
-# Generate signup page
-blockhost-generate-signup --output /var/www/signup.html
-
-# Start monitor
-npm run monitor
 ```
-
-## Development
 
 ```bash
 npx tsc --noEmit          # Type-check TypeScript
-npm run monitor            # Run event monitor
-npx asc src/index.ts --config asconfig.json  # Build contracts (from contract dir)
+npm run monitor            # Run event monitor (needs config on a deployed host)
+```
+
+Contract compilation (from a contract subdirectory):
+
+```bash
+npx asc src/index.ts --config asconfig.json
+```
+
+Packaging (produces `.deb` for host + auth-svc template):
+
+```bash
+./packaging/build.sh
 ```
 
 ## Project Structure
