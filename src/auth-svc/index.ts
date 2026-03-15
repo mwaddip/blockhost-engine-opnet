@@ -416,6 +416,15 @@ function main(): void {
     process.exit(1);
   }
 
+  // Load engine.js from the same directory as the signing page (template contract)
+  const signingPageDir = path.dirname(config.signing_page_path);
+  let engineJs = "";
+  try {
+    engineJs = fs.readFileSync(path.join(signingPageDir, "engine.js"), "utf8");
+  } catch {
+    console.log("[AUTH] No engine.js found — signing page uses inline JS");
+  }
+
   const tlsOptions: https.ServerOptions = {
     cert: fs.readFileSync(config.cert_path),
     key: fs.readFileSync(config.key_path),
@@ -431,6 +440,12 @@ function main(): void {
     // GET / — serve signing page
     if (req.method === "GET" && pathname === "/") {
       sendResponse(res, 200, signingPageHtml, "text/html; charset=utf-8");
+      return;
+    }
+
+    // GET /engine.js — serve signing page engine bundle
+    if (req.method === "GET" && pathname === "/engine.js" && engineJs) {
+      sendResponse(res, 200, engineJs, "application/javascript; charset=utf-8");
       return;
     }
 

@@ -382,8 +382,9 @@ mkdir -p "$PKG_DIR/usr/share/blockhost/engine-hooks"
 cp "$PROJECT_DIR/scripts/first-boot-hook.sh" "$PKG_DIR/usr/share/blockhost/engine-hooks/first-boot.sh"
 chmod 755 "$PKG_DIR/usr/share/blockhost/engine-hooks/first-boot.sh"
 
-# Static resources
+# Static resources (signup page template + engine)
 cp "$PROJECT_DIR/scripts/signup-template.html" "$PKG_DIR/usr/share/blockhost/"
+cp "$PROJECT_DIR/scripts/signup-engine.js" "$PKG_DIR/usr/share/blockhost/"
 
 # Systemd service
 cp "$PROJECT_DIR/examples/blockhost-monitor.service" "$PKG_DIR/lib/systemd/system/blockhost-monitor.service"
@@ -417,6 +418,7 @@ echo "  /usr/bin/bhcrypt                   - Crypto tool CLI wrapper"
 echo "  /usr/bin/blockhost-deploy-contracts - Contract deployer script"
 echo "  /usr/bin/blockhost-mint-nft        - NFT minting CLI wrapper"
 echo "  /usr/bin/blockhost-generate-signup  - Signup page generator"
+echo "  /usr/share/blockhost/signup-engine.js - Signup page engine bundle"
 echo "  /usr/lib/python3/dist-packages/blockhost/engine_opnet/ - Engine wizard plugin"
 echo "  /usr/share/blockhost/engine.json   - Engine manifest"
 echo "  /usr/share/blockhost/contracts/    - WASM + ABI contract artifacts"
@@ -461,8 +463,10 @@ exec /usr/bin/node /usr/share/blockhost/auth-svc.js "$@"
 AUTHEOF
 chmod 755 "$TEMPLATE_PKG_DIR/usr/bin/web3-auth-svc"
 
-# Copy signing page HTML
+# Copy signing page (template + engine bundle)
 cp "$PROJECT_DIR/auth-svc/signing-page/index.html" "$TEMPLATE_PKG_DIR/usr/share/blockhost/signing-page/index.html"
+cp "$PROJECT_DIR/auth-svc/signing-page/engine.js" "$TEMPLATE_PKG_DIR/usr/share/blockhost/signing-page/engine.js"
+cp "$PROJECT_DIR/auth-svc/signing-page/template.html" "$TEMPLATE_PKG_DIR/usr/share/blockhost/signing-page/template.html"
 
 # Create systemd unit
 cat > "$TEMPLATE_PKG_DIR/lib/systemd/system/web3-auth-svc.service" << 'SVCEOF'
@@ -549,6 +553,8 @@ echo ""
 echo "Template package contents:"
 echo "  /usr/share/blockhost/auth-svc.js                  - Auth server bundle ($AUTH_SVC_SIZE)"
 echo "  /usr/bin/web3-auth-svc                            - Auth server wrapper"
-echo "  /usr/share/blockhost/signing-page/index.html      - Signing page HTML"
+echo "  /usr/share/blockhost/signing-page/index.html      - Signing page (generated)"
+echo "  /usr/share/blockhost/signing-page/template.html   - Signing page template"
+echo "  /usr/share/blockhost/signing-page/engine.js       - Signing page engine bundle"
 echo "  /lib/systemd/system/web3-auth-svc.service         - Systemd unit"
 echo "  /usr/lib/tmpfiles.d/web3-auth-svc.conf            - tmpfiles.d config"

@@ -16,7 +16,9 @@ Usage:
 
 import argparse
 import http.server
+import json
 import os
+import shutil
 import socket
 import socketserver
 import sys
@@ -35,17 +37,31 @@ TEMPLATE_LOCATIONS = [
     Path("/usr/share/blockhost/signup-template.html"),  # Installed
 ]
 
+ENGINE_JS_LOCATIONS = [
+    SCRIPT_DIR / "signup-engine.js",  # Development
+    Path("/usr/share/blockhost/signup-engine.js"),  # Installed
+]
+
+ENGINE_JSON_LOCATIONS = [
+    SCRIPT_DIR.parent / "engine.json",  # Development (repo root)
+    Path("/usr/share/blockhost/engine.json"),  # Installed
+]
+
+
+def _find_file(locations: list[Path]) -> Path:
+    """Find a file in known locations, return first match or first for error."""
+    for p in locations:
+        if p.exists():
+            return p
+    return locations[0]
+
 
 def find_template() -> Path:
-    """Find the template file in known locations."""
-    for path in TEMPLATE_LOCATIONS:
-        if path.exists():
-            return path
-    return TEMPLATE_LOCATIONS[0]  # Return first for error message
+    return _find_file(TEMPLATE_LOCATIONS)
 
 
 def load_config(config_path: str, web3_config_path: str) -> dict:
-    """Load configuration from YAML files."""
+    """Load configuration from YAML files and engine.json."""
     config = {}
 
     # Load main blockhost config
@@ -62,6 +78,18 @@ def load_config(config_path: str, web3_config_path: str) -> dict:
             config.update(web3_config)
     else:
         print(f"Warning: Web3 config file not found: {web3_config_path}")
+
+    # Read accent_color from engine.json (for PRIMARY_COLOR)
+    engine_json = _find_file(ENGINE_JSON_LOCATIONS)
+    if engine_json.exists():
+        try:
+            with open(engine_json) as f:
+                engine_config = json.load(f)
+            accent = engine_config.get("accent_color", "")
+            if accent:
+                config.setdefault("primary_color", accent)
+        except (json.JSONDecodeError, OSError):
+            pass
 
     return config
 
@@ -82,7 +110,7 @@ def generate_page(config: dict, template: str) -> str:
 
     # Theming
     page_title = config.get('page_title', 'Blockhost - Get Your Server')
-    primary_color = config.get('primary_color', '#f7931a')
+    primary_color = config.get('primary_color', '#F97900')
 
     if not server_public_key:
         print("Error: server_public_key not found in config. Run blockhost-init first.")
@@ -198,6 +226,16 @@ def main():
     output_path = Path(args.output).resolve()
     with open(output_path, 'w') as f:
         f.write(html)
+
+    # Copy signup-engine.js alongside the output HTML
+    engine_js = _find_file(ENGINE_JS_LOCATIONS)
+    if engine_js.exists():
+        dest = output_path.parent / "signup-engine.js"
+        if dest.resolve() != engine_js.resolve():
+            shutil.copy2(engine_js, dest)
+            print(f"Copied: {dest}")
+    else:
+        print(f"Warning: signup-engine.js not found (template will fail to load)")
 
     blockchain = config.get('blockchain', {})
     print(f"Generated: {output_path}")
