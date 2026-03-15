@@ -44,8 +44,8 @@ The engine discovers provisioner commands via a manifest file (`/usr/share/block
 | `src/auth-svc/` | TypeScript | Web3 auth signing server (esbuild-bundled JS for VMs) |
 | `src/root-agent/` | TypeScript | Client for the privileged root agent daemon |
 | `blockhost/engine_opnet/` | Python | Installer wizard plugin (blockchain config, finalization steps) |
-| `auth-svc/signing-page/` | HTML | Signing page served by auth-svc |
-| `scripts/` | TS/Python/Bash | Deployment, signup page generation, server init |
+| `auth-svc/signing-page/` | HTML/JS | Signing page template + engine bundle (served by auth-svc) |
+| `scripts/` | TS/JS/Python/Bash | Deployment, signup page template + engine, server init |
 
 ## Prerequisites
 
@@ -311,6 +311,7 @@ The engine ships an HTTPS signing server as an esbuild-bundled JS file with a no
 The auth-svc serves the signing page and handles callback-based signature submission:
 
 - `GET /` — Serves the signing page HTML
+- `GET /engine.js` — Serves the signing page engine bundle
 - `GET /auth/pending/:session_id` — Returns session JSON from `/run/libpam-web3/pending/`
 - `POST /auth/callback/:session_id` — Validates signature, writes `.sig` file atomically
 
@@ -327,7 +328,9 @@ The auth-svc ships as `blockhost-auth-svc_<version>_all.deb`, installed on VM te
 |------|---------|
 | `/usr/share/blockhost/auth-svc.js` | Bundled JS |
 | `/usr/bin/web3-auth-svc` | Node wrapper script |
-| `/usr/share/blockhost/signing-page/index.html` | Signing page HTML |
+| `/usr/share/blockhost/signing-page/index.html` | Signing page (generated) |
+| `/usr/share/blockhost/signing-page/template.html` | Signing page template (replaceable) |
+| `/usr/share/blockhost/signing-page/engine.js` | Signing page engine bundle |
 | `/lib/systemd/system/web3-auth-svc.service` | Systemd unit |
 | `/usr/lib/tmpfiles.d/web3-auth-svc.conf` | Creates `/run/libpam-web3/pending/` on boot |
 
@@ -387,7 +390,8 @@ blockhost-engine-opnet/
 │   ├── mint_nft                    # NFT minter (TypeScript)
 │   ├── init-server.sh              # Server initialization
 │   ├── generate-signup-page        # Signup page generator (Python)
-│   └── signup-template.html        # Signup page template
+│   ├── signup-template.html        # Signup page template (replaceable HTML/CSS)
+│   └── signup-engine.js            # Signup page engine bundle (wallet + purchase logic)
 ├── blockhost/engine_opnet/         # Installer wizard plugin
 │   ├── wizard.py                   # Blueprint, API routes, finalization steps
 │   └── templates/engine_opnet/     # Wizard page and summary templates
@@ -406,7 +410,7 @@ blockhost-engine-opnet/
 │   ├── auth-svc/                   # Web3 auth signing server (esbuild-bundled for VMs)
 │   └── root-agent/                 # Root agent client (privilege separation)
 ├── auth-svc/                       # Auth service assets
-│   └── signing-page/               # Signing page HTML (served by auth-svc)
+│   └── signing-page/               # Signing page (template.html + engine.js → index.html)
 ├── examples/                       # Deployment examples
 │   ├── blockhost-monitor.service
 │   ├── blockhost-admin.yaml.example

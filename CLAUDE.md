@@ -92,7 +92,7 @@ blockhost-engine-opnet/
 │   ├── auth-svc/        # Web3 auth signing server (esbuild-bundled for VMs)
 │   └── root-agent/      # Root agent client (Unix socket, privilege separation)
 ├── auth-svc/            # Auth service assets
-│   └── signing-page/    # Signing page HTML (served by auth-svc on VMs)
+│   └── signing-page/    # Signing page (template.html + engine.js → index.html)
 └── examples/            # Deployment examples (systemd, env, config)
 ```
 
