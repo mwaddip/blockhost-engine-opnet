@@ -129,6 +129,11 @@
         if (!data) return;
         otp = data.otp || '';
         machineId = data.machine_id || '';
+        // Populate visible fields if the template provides them
+        var codeEl = $('code');
+        var machineEl = $('machine');
+        if (codeEl) codeEl.value = otp;
+        if (machineEl) machineEl.value = machineId;
       }).catch(function () {
         setStatus('Failed to load session', 'error');
       });
