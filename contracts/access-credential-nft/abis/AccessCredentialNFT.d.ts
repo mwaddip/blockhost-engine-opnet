@@ -12,6 +12,10 @@ export type TransferredEvent = {
     readonly from: Address;
     readonly to: Address;
     readonly amount: bigint;
+    readonly operator: Address;
+    readonly from: Address;
+    readonly to: Address;
+    readonly tokenId: bigint;
 };
 
 // ------------------------------------------------------------------
