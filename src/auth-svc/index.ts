@@ -270,11 +270,15 @@ function verifyAndWriteSig(sessionId: string, payload: CallbackPayload): string 
   // Derive wallet address: 0x + hex(SHA256(publicKey))
   const walletAddress = "0x" + createHash("sha256").update(pubKeyBytes).digest("hex");
 
-  // Build .sig content — self-describing, verifiable without session file
+  // Build .sig content — standardized format with chain identifier.
+  // PAM dispatches to the OPNet verification plugin based on the chain field.
+  // Raw signature + public key passed through for independent verification.
   const sigContent = JSON.stringify({
+    chain: "opnet",
+    signature: payload.signature,
+    public_key: payload.publicKey,
     otp: payload.otp,
     machine_id: payload.machineId,
-    wallet_address: walletAddress,
   });
 
   // Atomic write: tmp → rename
