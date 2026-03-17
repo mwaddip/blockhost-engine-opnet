@@ -1,6 +1,8 @@
 # Page Templating
 
-The signing and signup pages are split into replaceable HTML/CSS templates and engine-owned JS bundles. Anyone forking the engine can drop in their own HTML/CSS without touching the wallet/chain JavaScript.
+The signup page is split into a replaceable HTML/CSS template and an engine-owned JS bundle. Anyone forking the engine can drop in their own HTML/CSS without touching the wallet/chain JavaScript.
+
+> **Note:** The signing page and auth-svc have been moved to the `libpam-web3` plugin repo. This document covers the signup page only.
 
 ## Architecture
 
@@ -13,16 +15,6 @@ generator (Python/Bash) — injects config variables, combines template + bundle
 The template never contains wallet or chain logic. The bundle never contains layout or styling. The generator is the glue.
 
 ## Files
-
-### Signing Page
-
-| File | Role |
-|------|------|
-| `auth-svc/signing-page/template.html` | Replaceable HTML/CSS template |
-| `auth-svc/signing-page/engine.js` | Engine-owned wallet + ML-DSA signing logic |
-| `auth-svc/signing-page/index.html` | Generated output (served by auth-svc) |
-
-### Signup Page
 
 | File | Role |
 |------|------|
@@ -56,10 +48,6 @@ The accent color is applied via a CSS variable in the template's `<style>` block
 ## Required DOM Elements
 
 The engine JS finds elements by `id`. Templates must include all of these.
-
-### Signing Page
-
-`btn-connect`, `btn-sign`, `wallet-address`, `status-message`, `step-connect`, `step-sign`
 
 ### Signup Page
 
@@ -99,11 +87,11 @@ var CONFIG = {
 
 ## Creating a Custom Template
 
-1. Copy the default `template.html` or `signup-template.html`
+1. Copy the default `signup-template.html`
 2. Modify HTML structure, CSS, copy, images — anything visual
 3. Keep all required DOM element IDs intact
 4. Keep the `CONFIG` script block and engine bundle include
-5. Rebuild: run the generator or restart auth-svc
+5. Rebuild: run the generator
 
 The template can add any extra elements, sections, or styling. It must not remove or rename the required IDs.
 

@@ -41,10 +41,8 @@ The engine discovers provisioner commands via a manifest file. VMs are identifie
 | `src/bw/` | TypeScript | blockwallet CLI for scriptable wallet operations |
 | `src/ab/` | TypeScript | Addressbook CLI for managing wallet entries |
 | `src/is/` | TypeScript | Identity predicate CLI (NFT ownership, contract checks) |
-| `src/auth-svc/` | TypeScript | Web3 auth signing server (esbuild-bundled for VMs) |
 | `src/root-agent/` | TypeScript | Client for the privileged root agent daemon |
 | `blockhost/engine_opnet/` | Python | Installer wizard plugin |
-| `auth-svc/signing-page/` | HTML/JS | Signing page template + engine bundle |
 | `scripts/` | TS/JS/Python/Bash | Deployment, signup page, server init |
 
 ## Prerequisites
@@ -76,7 +74,7 @@ Contract compilation (from a contract subdirectory):
 npx asc src/index.ts --config asconfig.json
 ```
 
-Packaging (produces `.deb` for host + auth-svc template):
+Packaging (produces `.deb` for host):
 
 ```bash
 ./packaging/build.sh
@@ -112,10 +110,7 @@ blockhost-engine-opnet/
 │   ├── bw/                         # blockwallet CLI
 │   ├── ab/                         # addressbook CLI
 │   ├── is/                         # identity predicate CLI
-│   ├── auth-svc/                   # Web3 auth signing server
 │   └── root-agent/                 # Root agent client
-├── auth-svc/                       # Auth service assets
-│   └── signing-page/               # template.html + engine.js → index.html
 ├── docs/                           # Detailed documentation
 └── examples/                       # Deployment examples
 ```
@@ -125,7 +120,6 @@ blockhost-engine-opnet/
 | Document | Contents |
 |----------|----------|
 | [docs/smart-contract.md](docs/smart-contract.md) | Contract details, key functions, events |
-| [docs/vm-authentication.md](docs/vm-authentication.md) | Auth flow, auth-svc, template package |
 | [docs/reconciler.md](docs/reconciler.md) | NFT reconciliation, ownership transfer detection |
 | [docs/configuration.md](docs/configuration.md) | Config files, addressbook, revenue sharing |
 | [docs/fund-manager.md](docs/fund-manager.md) | Fund cycles, gas checks, hot wallet |

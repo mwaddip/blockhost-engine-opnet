@@ -183,7 +183,7 @@ deployment:
     template: debian-12-web3-template (VMID 9001)
     authentication: NFT-based web3 (pam_web3 module)
     services:
-      - web3-auth-svc (verifies NFT ownership, serves signing page over HTTPS on port 8443)
+      - web3-auth-svc (from libpam-web3 — signing page + ML-DSA verification on port 8443)
 
 # Flow diagram
 workflow: |

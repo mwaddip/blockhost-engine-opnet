@@ -4,19 +4,15 @@ set -e
 
 VERSION="0.1.0"
 PKG_NAME="blockhost-engine-opnet_${VERSION}_all"
-TEMPLATE_PKG_NAME="blockhost-auth-svc_${VERSION}_all"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PKG_DIR="$SCRIPT_DIR/$PKG_NAME"
-TEMPLATE_PKG_DIR="$SCRIPT_DIR/$TEMPLATE_PKG_NAME"
 
 echo "Building blockhost-engine-opnet v${VERSION}..."
 
 # Clean up build artifacts on exit (success or failure)
 cleanup() {
   rm -rf "$PKG_DIR"
-  rm -rf "$TEMPLATE_PKG_DIR"
-  rm -f "$SCRIPT_DIR/auth-svc.js"
 }
 trap cleanup EXIT
 
@@ -147,26 +143,6 @@ cat > "$PKG_DIR/usr/bin/bhcrypt" << 'BHEOF'
 exec node /usr/share/blockhost/bhcrypt.js "$@"
 BHEOF
 chmod 755 "$PKG_DIR/usr/bin/bhcrypt"
-
-# ============================================
-# Bundle auth-svc with esbuild
-# ============================================
-echo ""
-echo "Bundling auth-svc with esbuild..."
-npx esbuild "$PROJECT_DIR/src/auth-svc/index.ts" \
-    --bundle \
-    --platform=node \
-    --target=node22 \
-    --minify \
-    --outfile="$SCRIPT_DIR/auth-svc.js"
-
-if [ ! -f "$SCRIPT_DIR/auth-svc.js" ]; then
-    echo "ERROR: Failed to create auth-svc bundle"
-    exit 1
-fi
-
-AUTH_SVC_SIZE=$(du -h "$SCRIPT_DIR/auth-svc.js" | cut -f1)
-echo "auth-svc bundle created: $AUTH_SVC_SIZE"
 
 # ============================================
 # Copy WASM contract artifacts
@@ -441,120 +417,5 @@ if [ -d "$(dirname "$PACKAGES_HOST_DIR")" ]; then
     echo "Copied to: $PACKAGES_HOST_DIR/${PKG_NAME}.deb"
 fi
 
-# ============================================
-# Build template package: blockhost-auth-svc
-# (installed on VMs, not the host)
-# ============================================
 echo ""
-echo "=========================================="
-echo "Building template package: blockhost-auth-svc v${VERSION}..."
-echo "=========================================="
-
-rm -rf "$TEMPLATE_PKG_DIR"
-mkdir -p "$TEMPLATE_PKG_DIR"/{DEBIAN,usr/bin,usr/share/blockhost/signing-page,lib/systemd/system,usr/lib/tmpfiles.d}
-
-# Copy bundled JS
-cp "$SCRIPT_DIR/auth-svc.js" "$TEMPLATE_PKG_DIR/usr/share/blockhost/auth-svc.js"
-
-# Create wrapper script (same pattern as bw, ab, is, bhcrypt)
-cat > "$TEMPLATE_PKG_DIR/usr/bin/web3-auth-svc" << 'AUTHEOF'
-#!/bin/sh
-exec /usr/bin/node /usr/share/blockhost/auth-svc.js "$@"
-AUTHEOF
-chmod 755 "$TEMPLATE_PKG_DIR/usr/bin/web3-auth-svc"
-
-# Copy signing page (template + engine bundle)
-cp "$PROJECT_DIR/auth-svc/signing-page/index.html" "$TEMPLATE_PKG_DIR/usr/share/blockhost/signing-page/index.html"
-cp "$PROJECT_DIR/auth-svc/signing-page/engine.js" "$TEMPLATE_PKG_DIR/usr/share/blockhost/signing-page/engine.js"
-cp "$PROJECT_DIR/auth-svc/signing-page/template.html" "$TEMPLATE_PKG_DIR/usr/share/blockhost/signing-page/template.html"
-
-# Create systemd unit
-cat > "$TEMPLATE_PKG_DIR/lib/systemd/system/web3-auth-svc.service" << 'SVCEOF'
-[Unit]
-Description=Web3 Authentication Signing Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/web3-auth-svc
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-# Create tmpfiles.d config (creates pending dir on boot)
-cat > "$TEMPLATE_PKG_DIR/usr/lib/tmpfiles.d/web3-auth-svc.conf" << 'TMPEOF'
-d /run/libpam-web3/pending 0755 root root -
-TMPEOF
-
-# Create DEBIAN/control
-cat > "$TEMPLATE_PKG_DIR/DEBIAN/control" << EOF
-Package: blockhost-auth-svc
-Version: ${VERSION}
-Section: admin
-Priority: optional
-Architecture: all
-Depends: nodejs (>= 22)
-Maintainer: Blockhost <admin@blockhost.io>
-Description: Web3 authentication signing server for Blockhost VMs
- HTTPS server that serves the web3 signing page and handles
- callback-based signature submission for PAM authentication.
- .
- This package is installed on VM templates, not the Proxmox host.
- Requires Node.js >= 18 runtime.
-EOF
-
-# Create DEBIAN/postinst
-cat > "$TEMPLATE_PKG_DIR/DEBIAN/postinst" << 'EOF'
-#!/bin/bash
-set -e
-case "$1" in
-    configure)
-        # Create pending directory (also handled by tmpfiles.d on boot)
-        mkdir -p /run/libpam-web3/pending
-        chmod 0755 /run/libpam-web3/pending
-
-        if [ -d /run/systemd/system ]; then
-            systemctl daemon-reload || true
-            systemd-tmpfiles --create web3-auth-svc.conf 2>/dev/null || true
-        fi
-        ;;
-esac
-exit 0
-EOF
-
-# Create DEBIAN/prerm
-cat > "$TEMPLATE_PKG_DIR/DEBIAN/prerm" << 'EOF'
-#!/bin/bash
-set -e
-case "$1" in
-    remove|upgrade|deconfigure)
-        if [ -d /run/systemd/system ]; then
-            systemctl stop web3-auth-svc 2>/dev/null || true
-            systemctl disable web3-auth-svc 2>/dev/null || true
-        fi
-        ;;
-esac
-exit 0
-EOF
-
-chmod 755 "$TEMPLATE_PKG_DIR/DEBIAN/postinst" "$TEMPLATE_PKG_DIR/DEBIAN/prerm"
-
-# Build template .deb
-dpkg-deb --build "$TEMPLATE_PKG_DIR"
-
-echo ""
-echo "=========================================="
-echo "Template package built: $SCRIPT_DIR/${TEMPLATE_PKG_NAME}.deb"
-echo "=========================================="
-echo ""
-echo "Template package contents:"
-echo "  /usr/share/blockhost/auth-svc.js                  - Auth server bundle ($AUTH_SVC_SIZE)"
-echo "  /usr/bin/web3-auth-svc                            - Auth server wrapper"
-echo "  /usr/share/blockhost/signing-page/index.html      - Signing page (generated)"
-echo "  /usr/share/blockhost/signing-page/template.html   - Signing page template"
-echo "  /usr/share/blockhost/signing-page/engine.js       - Signing page engine bundle"
-echo "  /lib/systemd/system/web3-auth-svc.service         - Systemd unit"
-echo "  /usr/lib/tmpfiles.d/web3-auth-svc.conf            - tmpfiles.d config"
+echo "Done."
