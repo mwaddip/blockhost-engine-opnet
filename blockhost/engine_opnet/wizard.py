@@ -833,6 +833,23 @@ def _dict_to_yaml(data: dict, lines: list, indent: int):
             lines.append(f'{prefix}{key}: "{value}"')
 
 
+def _update_credential_nft_id(nft_id: int):
+    """Update admin.credential_nft_id in blockhost.yaml after NFT minting."""
+    bh_path = CONFIG_DIR / "blockhost.yaml"
+    if not bh_path.exists():
+        return
+    try:
+        import yaml
+
+        data = yaml.safe_load(bh_path.read_text()) or {}
+        admin = data.get("admin", {})
+        admin["credential_nft_id"] = nft_id
+        data["admin"] = admin
+        _write_yaml(bh_path, data)
+    except Exception:
+        pass  # Non-fatal — config was already written with placeholder
+
+
 def _discover_bridge() -> str:
     """Read bridge name from first-boot marker or scan /sys/class/net."""
     bridge_file = Path("/run/blockhost/bridge")
@@ -1428,10 +1445,25 @@ def finalize_mint_nft(config: dict) -> tuple[bool, Optional[str]]:
 
         # stdout is the token ID
         token_id = result.stdout.strip()
+        nft_id = int(token_id) if token_id.isdigit() else 0
         config["_step_result_mint_nft"] = {
-            "token_id": int(token_id) if token_id.isdigit() else 0,
+            "token_id": nft_id,
             "owner": admin_wallet,
         }
+
+        # Update blockhost.yaml with the actual minted token ID
+        if nft_id > 0:
+            _update_credential_nft_id(nft_id)
+            # Update NFT encrypted data with the real token ID
+            if user_encrypted:
+                subprocess.run(
+                    ["bw", "set", "encrypt", str(nft_id), user_encrypted],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env=_bw_env(blockchain),
+                )
+
         return True, None
     except subprocess.TimeoutExpired:
         return False, "NFT minting timed out (waited for mining confirmation)"
