@@ -224,6 +224,18 @@ window.OPNet = {
         onStatus('error', 'Tracking timed out after ' + Math.round(maxMs / 1000) + 's');
         return 'timeout';
     },
+    getBlockInfo: async function(rpcUrl) {
+        var provider = getProvider(rpcUrl);
+        try {
+            var height = await provider.getBlockNumber();
+            var block = await provider.getBlock(height, false);
+            var timestamp = block ? Number(block.timeStamp || block.timestamp || 0) : 0;
+            var ageSecs = timestamp ? Math.floor(Date.now() / 1000) - timestamp : 0;
+            return { height: Number(height), ageSecs: ageSecs > 0 ? ageSecs : 0 };
+        } catch (_) {
+            return null;
+        }
+    },
     inferNetwork: inferNetwork,
     expandToDecimals: BitcoinUtils.expandToDecimals.bind(BitcoinUtils),
 };
@@ -721,6 +733,157 @@ async function updateCost() {
 daysInput.addEventListener('input', updateCost);
 planSelect.addEventListener('change', updateCost);
 
+// ── Confirmation tracker ──────────────────────────────────────────────
+
+var confirmTracker = {
+    txId: null, startTime: null, confirmed: false,
+    pollId: null, timerId: null,
+    blockAge: undefined, blockAgeAt: null
+};
+
+function startConfirmationTracker(txId, subId, planName, days) {
+    // Stop any previous tracker
+    clearInterval(confirmTracker.pollId);
+    clearInterval(confirmTracker.timerId);
+
+    confirmTracker = {
+        txId: txId, startTime: Date.now(), confirmed: false,
+        pollId: null, timerId: null,
+        blockAge: undefined, blockAgeAt: null
+    };
+
+    resultCard.classList.remove('hidden');
+    resultCard.innerHTML =
+        '<h2>Subscription #' + subId + '</h2>' +
+        '<p>Plan: ' + planName + ' &middot; ' + days + ' days</p>' +
+        '<div id="tx-tracker" style="margin-top: 1rem;">' +
+            '<div style="font-family: monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; word-break: break-all;">' +
+                'txid: ' + txId +
+            '</div>' +
+            '<div id="tx-status" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">' +
+                '<span class="spinner"></span>' +
+                '<span style="font-weight: 500;">Broadcast</span>' +
+            '</div>' +
+            '<div id="tx-mempool" style="font-size: 0.875rem; margin-bottom: 0.25rem;">Checking mempool...</div>' +
+            '<div id="tx-block" style="font-size: 0.875rem; margin-bottom: 0.25rem;">Fetching block info...</div>' +
+            '<div id="tx-timer" style="font-size: 0.875rem; margin-bottom: 0.75rem;"></div>' +
+            '<div id="tx-hint" style="font-size: 0.8rem; color: var(--text-muted);">' +
+                'Waiting for next block (Bitcoin blocks average ~10 minutes)' +
+            '</div>' +
+            '<label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; font-size: 0.8rem; cursor: pointer;">' +
+                '<input type="checkbox" id="tx-sound-chk" style="width: auto; margin: 0;" checked>' +
+                'Play sound when confirmed' +
+            '</label>' +
+        '</div>';
+
+    // Initial poll + start intervals
+    pollTxConfirmation();
+    confirmTracker.pollId = setInterval(function() {
+        if (!confirmTracker.confirmed) pollTxConfirmation();
+    }, 15000);
+    confirmTracker.timerId = setInterval(updateTxTimer, 1000);
+}
+
+function pollTxConfirmation() {
+    // Fetch block info
+    window.OPNet.getBlockInfo(CONFIG.rpcUrl).then(function(info) {
+        var el = document.getElementById('tx-block');
+        if (!el || !info) return;
+        var text = 'Block #' + info.height.toLocaleString();
+        if (info.ageSecs !== undefined) {
+            var bm = Math.floor(info.ageSecs / 60);
+            var bs = info.ageSecs % 60;
+            text += ' (mined ' + bm + 'm ' + bs + 's ago)';
+            confirmTracker.blockAge = info.ageSecs;
+            confirmTracker.blockAgeAt = Date.now();
+        }
+        el.textContent = text;
+    }).catch(function() {});
+
+    // Check mempool / mined status using the provider directly
+    var rpcProvider = getProvider(CONFIG.rpcUrl);
+
+    rpcProvider.getTransaction(confirmTracker.txId).then(function(tx) {
+        if (tx) markTxConfirmed('Confirmed in block');
+    }).catch(function() {});
+
+    if (!confirmTracker.confirmed) {
+        rpcProvider.getPendingTransaction(confirmTracker.txId).then(function(pending) {
+            if (pending) {
+                var el = document.getElementById('tx-mempool');
+                if (el) el.innerHTML = '<span style="color: var(--success);">In mempool</span> — waiting to be mined';
+            }
+        }).catch(function() {});
+    }
+}
+
+function markTxConfirmed(reason) {
+    if (confirmTracker.confirmed) return;
+    confirmTracker.confirmed = true;
+
+    clearInterval(confirmTracker.pollId);
+    clearInterval(confirmTracker.timerId);
+
+    var statusEl = document.getElementById('tx-status');
+    var mempoolEl = document.getElementById('tx-mempool');
+    var hintEl = document.getElementById('tx-hint');
+    var spinner = statusEl ? statusEl.querySelector('.spinner') : null;
+
+    if (spinner) spinner.style.display = 'none';
+    if (statusEl) statusEl.querySelector('span:last-child').textContent = 'Confirmed';
+    if (mempoolEl) mempoolEl.innerHTML = '<span style="color: var(--success);">' + reason + '</span>';
+    if (hintEl) hintEl.innerHTML = '<span style="color: var(--success);">Subscription confirmed! Your server will be provisioned shortly.</span>';
+
+    showStatus(purchaseStatus, 'Subscription confirmed! Your server will be provisioned shortly.', 'success');
+    updateStep(3, 'done');
+
+    // Play confirmation sound
+    if (document.getElementById('tx-sound-chk') && document.getElementById('tx-sound-chk').checked) {
+        playConfirmSound();
+    }
+}
+
+function updateTxTimer() {
+    if (confirmTracker.confirmed) return;
+
+    var timerEl = document.getElementById('tx-timer');
+    if (!timerEl) return;
+
+    var elapsed = Math.floor((Date.now() - confirmTracker.startTime) / 1000);
+    var mins = Math.floor(elapsed / 60);
+    var secs = elapsed % 60;
+    var parts = ['Elapsed: ' + mins + ':' + (secs < 10 ? '0' : '') + secs];
+
+    if (confirmTracker.blockAge !== undefined && confirmTracker.blockAgeAt) {
+        var extraSecs = Math.floor((Date.now() - confirmTracker.blockAgeAt) / 1000);
+        var totalAge = confirmTracker.blockAge + extraSecs;
+        var bm = Math.floor(totalAge / 60);
+        var bs = totalAge % 60;
+        parts.push('Last block: ' + bm + 'm ' + bs + 's ago');
+    }
+
+    timerEl.textContent = parts.join('  |  ');
+}
+
+function playConfirmSound() {
+    try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        // Two-tone chime: C5 then E5
+        [523.25, 659.25].forEach(function(freq, i) {
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.3, ctx.currentTime + i * 0.15);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.4);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(ctx.currentTime + i * 0.15);
+            osc.stop(ctx.currentTime + i * 0.15 + 0.4);
+        });
+    } catch (_) {}
+}
+
 // ── Step 3: Purchase ──────────────────────────────────────────────────
 
 btnPurchase.addEventListener('click', async function() {
@@ -846,39 +1009,8 @@ btnPurchase.addEventListener('click', async function() {
         var txId = buyTx.transactionId;
         showStatus(purchaseStatus, '<span class="spinner"></span>Transaction sent. Waiting for confirmation...', 'info');
 
-        resultCard.classList.remove('hidden');
-        resultCard.innerHTML =
-            '<h2>Subscription #' + subId.toString() + '</h2>' +
-            '<p>Plan: ' + plan.name + ' &middot; ' + days + ' days</p>' +
-            '<div id="tx-tracker">' +
-                '<div class="step"><div class="step-number done" id="tx-step-sent">1</div>' +
-                    '<div class="step-content"><div class="step-title">Sent</div>' +
-                    '<div class="step-desc" style="word-break:break-all">' + txId + '</div></div></div>' +
-                '<div class="step"><div class="step-number" id="tx-step-mempool">2</div>' +
-                    '<div class="step-content"><div class="step-title" id="tx-label-mempool">Mempool</div>' +
-                    '<div class="step-desc" id="tx-desc-mempool">Waiting to enter mempool...</div></div></div>' +
-                '<div class="step"><div class="step-number" id="tx-step-mined">3</div>' +
-                    '<div class="step-content"><div class="step-title" id="tx-label-mined">Mined</div>' +
-                    '<div class="step-desc" id="tx-desc-mined">Waiting for block confirmation...</div></div></div>' +
-            '</div>';
-
-        window.OPNet.trackTransaction(CONFIG.rpcUrl, txId, function(state, detail) {
-            if (state === 'mempool') {
-                document.getElementById('tx-step-mempool').classList.add('done');
-                document.getElementById('tx-desc-mempool').textContent = 'Transaction is in the mempool';
-            } else if (state === 'mined') {
-                document.getElementById('tx-step-mempool').classList.add('done');
-                document.getElementById('tx-desc-mempool').textContent = 'Transaction is in the mempool';
-                document.getElementById('tx-step-mined').classList.add('done');
-                document.getElementById('tx-desc-mined').textContent = 'Confirmed in block!';
-                showStatus(purchaseStatus, 'Subscription confirmed! Your server will be provisioned shortly.', 'success');
-                updateStep(3, 'done');
-            } else if (state === 'error') {
-                document.getElementById('tx-desc-mined').textContent = String(detail);
-                showStatus(purchaseStatus, 'Transaction sent but tracking timed out. It may still confirm — check the View My Servers tab.', 'info');
-                updateStep(3, 'done');
-            }
-        });
+        // Launch the live confirmation tracker
+        startConfirmationTracker(txId, subId.toString(), plan.name, days);
 
     } catch (err) {
         console.error(err);
