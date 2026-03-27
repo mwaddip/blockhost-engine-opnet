@@ -196,7 +196,7 @@ window.OPNet = {
         var provider = getProvider(rpcUrl);
         var elapsed = 0;
         var interval = 4000;
-        var maxMs = timeoutMs || 300000;
+        var maxMs = timeoutMs || 1800000;
         var inMempool = false;
 
         while (elapsed < maxMs) {
