@@ -771,7 +771,7 @@ function startConfirmationTracker(txId, subId, planName, days) {
                 'Waiting for next block (Bitcoin blocks average ~10 minutes)' +
             '</div>' +
             '<label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; font-size: 0.8rem; cursor: pointer;">' +
-                '<input type="checkbox" id="tx-sound-chk" style="width: auto; margin: 0;" checked>' +
+                '<input type="checkbox" id="tx-sound-chk" style="width: auto; margin: 0;">' +
                 'Play sound when confirmed' +
             '</label>' +
         '</div>';
