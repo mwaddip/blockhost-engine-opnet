@@ -4,12 +4,65 @@
  */
 
 import { spawn, spawnSync } from "child_process";
+import * as fs from "fs";
 import { getCommand } from "../provisioner";
 import { eciesDecrypt, symmetricEncrypt, loadServerPrivateKey } from "../crypto";
 
 // Paths on the server
 const WORKING_DIR = "/var/lib/blockhost";
 const SSH_PORT = 22;
+const NETWORK_MODE_PATH = "/etc/blockhost/network-mode";
+
+function getNetworkMode(): string {
+  try {
+    const mode = fs.readFileSync(NETWORK_MODE_PATH, "utf8").trim();
+    return mode || "broker";
+  } catch {
+    return "broker";
+  }
+}
+
+/**
+ * Resolve the subscriber-facing host via blockhost.network_hook.
+ * Returns the host string on success, or null on failure.
+ */
+function resolveConnectionEndpoint(vmName: string, bridgeIp: string, mode: string): string | null {
+  const script =
+    "import sys\n" +
+    "from blockhost.network_hook import get_connection_endpoint\n" +
+    "print(get_connection_endpoint(sys.argv[1], sys.argv[2], sys.argv[3]))\n";
+  const result = spawnSync("python3", ["-c", script, vmName, bridgeIp, mode], {
+    cwd: WORKING_DIR,
+    timeout: 60_000,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    const err = (result.stderr || result.stdout || "").trim();
+    console.error(`[ERROR] network_hook.get_connection_endpoint failed for ${vmName}: ${err || `exit ${result.status}`}`);
+    return null;
+  }
+  const host = result.stdout.trim();
+  return host || null;
+}
+
+/**
+ * Release network resources on VM destroy via blockhost.network_hook.cleanup.
+ */
+function cleanupNetworkResources(vmName: string, mode: string): void {
+  const script =
+    "import sys\n" +
+    "from blockhost.network_hook import cleanup\n" +
+    "cleanup(sys.argv[1], sys.argv[2])\n";
+  const result = spawnSync("python3", ["-c", script, vmName, mode], {
+    cwd: WORKING_DIR,
+    timeout: 30_000,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    const err = (result.stderr || result.stdout || "").trim();
+    console.warn(`[WARN] network_hook.cleanup failed for ${vmName}: ${err || `exit ${result.status}`}`);
+  }
+}
 
 export interface SubscriptionCreatedEvent {
   subscriptionId: bigint;
@@ -269,12 +322,21 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
 
   console.log(`[INFO] VM summary: ip=${summary.ip}, vmid=${summary.vmid}`);
 
-  // Step 4: Encrypt connection details using user's signature
+  // Step 4: Resolve subscriber-facing host via network hook (mode-agnostic)
+  const networkMode = getNetworkMode();
+  const host = resolveConnectionEndpoint(vmName, summary.ip, networkMode);
+  if (!host) {
+    console.error(`[ERROR] Failed to resolve connection endpoint for ${vmName} (mode=${networkMode})`);
+    console.log("==========================================\n");
+    return;
+  }
+  console.log(`[INFO] Connection host: ${host} (mode=${networkMode})`);
+
+  // Step 5: Encrypt connection details using user's signature
   let userEncrypted = "0x";
 
   if (userSignature) {
-    const hostname = summary.ipv6 || summary.ip;
-    const encrypted = encryptConnectionDetails(userSignature, hostname, summary.username);
+    const encrypted = encryptConnectionDetails(userSignature, host, summary.username);
     if (encrypted) {
       userEncrypted = encrypted;
       console.log("[OK] Connection details encrypted");
@@ -283,7 +345,7 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
     }
   }
 
-  // Step 5: Mint NFT
+  // Step 6: Mint NFT
   const mintArgs = [
     "--owner-wallet", event.subscriber,
   ];
@@ -303,7 +365,7 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
     return;
   }
 
-  // Step 6: Capture actual token ID from mint stdout
+  // Step 7: Capture actual token ID from mint stdout
   const actualTokenId = parseMintOutput(mintResult.stdout);
   if (actualTokenId === null) {
     console.error(`[WARN] Could not parse token ID from mint output: ${mintResult.stdout.trim()}`);
@@ -313,19 +375,23 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
 
   console.log(`[OK] NFT minted for ${vmName} (token #${actualTokenId})`);
 
-  // Step 7: Update GECOS with actual token ID
-  const updateGecosCmd = getCommand("update-gecos");
-  const gecosArgs = [vmName, event.subscriber, "--nft-id", String(actualTokenId)];
-  const gecosResult = spawnSync(updateGecosCmd, gecosArgs, { timeout: 30_000, cwd: WORKING_DIR });
+  // Step 8: Update GECOS with actual token ID via guest-exec (usermod inside the VM)
+  const gecosString = `wallet=${event.subscriber},nft=${actualTokenId}`;
+  const guestExecCmd = getCommand("guest-exec");
+  const gecosResult = spawnSync(
+    guestExecCmd,
+    [vmName, "usermod", "-c", gecosString, summary.username],
+    { timeout: 30_000, cwd: WORKING_DIR },
+  );
   if (gecosResult.status !== 0) {
     const errMsg = gecosResult.stderr ? gecosResult.stderr.toString().trim() : "";
-    console.error(`[WARN] update-gecos failed for ${vmName}${errMsg ? ": " + errMsg : ""}`);
+    console.error(`[WARN] guest-exec usermod failed for ${vmName}${errMsg ? ": " + errMsg : ""}`);
     // Not fatal — reconciler will retry
   } else {
     console.log(`[OK] GECOS updated for ${vmName}`);
   }
 
-  // Step 8: Mark NFT minted in database (synchronous)
+  // Step 9: Mark NFT minted in database (synchronous)
   markNftMinted(actualTokenId, event.subscriber);
 
   console.log("==========================================\n");
@@ -437,6 +503,10 @@ export async function handleSubscriptionCancelled(event: SubscriptionCancelledEv
   } else {
     console.error(`[ERROR] Failed to destroy VM: ${output}`);
   }
+
+  // Release network-mode-specific resources (e.g. tor hidden service)
+  const networkMode = getNetworkMode();
+  cleanupNetworkResources(vmName, networkMode);
 
   console.log("============================================\n");
 }
