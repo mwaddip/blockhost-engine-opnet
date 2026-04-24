@@ -375,17 +375,13 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
 
   console.log(`[OK] NFT minted for ${vmName} (token #${actualTokenId})`);
 
-  // Step 8: Update GECOS with actual token ID via guest-exec (usermod inside the VM)
-  const gecosString = `wallet=${event.subscriber},nft=${actualTokenId}`;
-  const guestExecCmd = getCommand("guest-exec");
-  const gecosResult = spawnSync(
-    guestExecCmd,
-    [vmName, "usermod", "-c", gecosString, summary.username],
-    { timeout: 30_000, cwd: WORKING_DIR },
-  );
+  // Step 8: Update GECOS with actual token ID
+  const updateGecosCmd = getCommand("update-gecos");
+  const gecosArgs = [vmName, event.subscriber, "--nft-id", String(actualTokenId)];
+  const gecosResult = spawnSync(updateGecosCmd, gecosArgs, { timeout: 30_000, cwd: WORKING_DIR });
   if (gecosResult.status !== 0) {
     const errMsg = gecosResult.stderr ? gecosResult.stderr.toString().trim() : "";
-    console.error(`[WARN] guest-exec usermod failed for ${vmName}${errMsg ? ": " + errMsg : ""}`);
+    console.error(`[WARN] update-gecos failed for ${vmName}${errMsg ? ": " + errMsg : ""}`);
     // Not fatal — reconciler will retry
   } else {
     console.log(`[OK] GECOS updated for ${vmName}`);
