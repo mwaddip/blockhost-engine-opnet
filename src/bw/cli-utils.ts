@@ -12,7 +12,7 @@ import {
 } from '../fund-manager/contract-abis.js';
 import { isValidInternalAddress } from '../fund-manager/addressbook.js';
 import { loadWeb3Config } from '../fund-manager/web3-config.js';
-import { ZERO_ADDRESS } from '../fund-manager/token-utils.js';
+import { ZERO_ADDRESS, formatUnits } from '../fund-manager/token-utils.js';
 
 /**
  * Create an OPNet provider and BlockhostSubscriptions contract from
@@ -77,14 +77,9 @@ export async function resolveToken(
 }
 
 /**
- * Format satoshi amount for display.
- *
- * @param sats - Amount in satoshis
- * @returns Formatted string like "0.00100000 BTC"
+ * Format a satoshi amount for human display, e.g. `100_000n` → `"0.001 BTC"`.
+ * Wraps `formatUnits(sats, 8)` (the canonical formatter — trims trailing zeros).
  */
 export function formatBtc(sats: bigint): string {
-    const whole = sats / 100_000_000n;
-    const frac = sats % 100_000_000n;
-    const fracStr = frac.toString().padStart(8, '0');
-    return `${whole}.${fracStr} BTC`;
+    return `${formatUnits(sats, 8)} BTC`;
 }

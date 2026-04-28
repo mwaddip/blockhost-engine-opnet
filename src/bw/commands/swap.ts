@@ -29,7 +29,7 @@ import type { Wallet } from '@btc-vision/transaction';
 import type { Addressbook } from '../../fund-manager/types.js';
 import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
 import { resolveWallet } from '../../fund-manager/addressbook.js';
-import { resolveToken } from '../cli-utils.js';
+import { resolveToken, formatBtc } from '../cli-utils.js';
 import {
     getTokenBalance,
     formatTokenBalance,
@@ -57,13 +57,6 @@ function isBtc(token: string): boolean {
 
 function parseSats(amountStr: string): bigint {
     return parseUnits(amountStr, 8);
-}
-
-function formatSats(sats: bigint): string {
-    const whole = sats / 100_000_000n;
-    const frac = (sats % 100_000_000n).toString().padStart(8, '0');
-    const trimmed = frac.replace(/0+$/, '') || '0';
-    return trimmed === '0' ? `${whole} BTC` : `${whole}.${trimmed} BTC`;
 }
 
 function applySlippage(amount: bigint): bigint {
@@ -242,7 +235,7 @@ async function executeNativeSwapBuy(
     const satsIn = parseSats(amountStr);
     if (satsIn === 0n) throw new Error('Amount is zero');
 
-    console.log(`  Input: ${formatSats(satsIn)}`);
+    console.log(`  Input: ${formatBtc(satsIn)}`);
 
     const nativeSwap = getContract<INativeSwapContract>(
         cfg.nativeSwap,

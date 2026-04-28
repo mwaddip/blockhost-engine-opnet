@@ -22,7 +22,8 @@ import {
   loadAdminConfig,
   initAdminCommands,
   shutdownAdminCommands,
-  processAdminCommands,
+  beginAdminCycle,
+  processAdminCommandsInBlock,
 } from "../admin";
 import {
   runReconciliation,
@@ -43,43 +44,13 @@ import { loadWeb3Config } from "../fund-manager/web3-config";
 const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
 
 /**
- * Process a single block for contract events.
- *
- * tx.events is a map: { [contractP2OP: string]: NetEvent[] }
- * Raw NetEvent only has `type` (string) and `data` (Uint8Array).
- *
- * contract.decodeEvents() accepts the full map, filters by its own
- * address (P2OP lookup), and returns OPNetEvent[] with `properties`.
- */
-async function processBlock(
-  provider: JSONRpcProvider,
-  blockNumber: bigint,
-  contract: IBlockhostSubscriptions,
-): Promise<void> {
-  const block = await provider.getBlock(blockNumber, true);
-  if (!block) return;
-
-  for (const tx of block.transactions) {
-    // decodeEvents() accepts the full events map and filters by contract address
-    const decoded = contract.decodeEvents(tx.events);
-    if (decoded.length === 0) continue;
-
-    const txHash = tx.hash;
-    for (const event of decoded) {
-      try {
-        await dispatchEvent(event, txHash, contract);
-      } catch (err) {
-        console.error(`Error handling event from tx ${txHash}: ${err}`);
-      }
-    }
-  }
-}
-
-/**
  * Dispatch an ABI-decoded OPNetEvent to the appropriate handler.
  * After decodeEvents(), event.type is the name and event.properties has decoded fields.
+ *
+ * `blockNum` is the height of the block where the event was emitted — passed
+ * to subscription handlers so expiry-day calculations anchor to that block.
  */
-async function dispatchEvent(event: OPNetEvent<ContractDecodedObjectResult>, txHash: string, contract: IBlockhostSubscriptions): Promise<void> {
+async function dispatchEvent(event: OPNetEvent<ContractDecodedObjectResult>, txHash: string, blockNum: bigint, contract: IBlockhostSubscriptions): Promise<void> {
   const eventName = event.type;
   const props = event.properties;
 
@@ -102,7 +73,7 @@ async function dispatchEvent(event: OPNetEvent<ContractDecodedObjectResult>, txH
         expiresAt: props.expiresAt as bigint,
         paidAmount: props.paidAmount as bigint,
         userEncrypted,
-      }, txHash);
+      }, txHash, blockNum);
       break;
     }
 
@@ -113,7 +84,7 @@ async function dispatchEvent(event: OPNetEvent<ContractDecodedObjectResult>, txH
         extendedBy: String(props.extendedBy),
         newExpiresAt: props.newExpiresAt as bigint,
         paidAmount: props.paidAmount as bigint,
-      }, txHash);
+      }, txHash, blockNum);
       break;
 
     case "SubscriptionCancelled":
@@ -174,7 +145,7 @@ async function main() {
   console.log("==============================================");
   console.log(`Contract: ${contractAddress}`);
   console.log(`RPC: ${rpcUrl}`);
-  console.log(`Network: ${network === networks.bitcoin ? 'mainnet' : network === networks.opnetTestnet ? 'testnet' : 'regtest'}`);
+  console.log(`Network: ${network === networks.bitcoin ? 'mainnet' : 'testnet'}`);
   console.log(`Poll Interval: ${POLL_INTERVAL_MS}ms`);
   console.log("----------------------------------------------\n");
 
@@ -202,8 +173,8 @@ async function main() {
   let lastProcessedBlock = await provider.getBlockNumber();
   console.log(`Connected. Starting from block: ${lastProcessedBlock}`);
   console.log(`NFT reconciliation: every ${getReconcileInterval() / 1000}s`);
-  console.log(`Fund cycle: every ${getFundCycleInterval() / 3600000}h`);
-  console.log(`Gas check: every ${getGasCheckInterval() / 60000}min`);
+  console.log(`Fund cycle: every ${getFundCycleInterval()}`);
+  console.log(`Gas check: every ${getGasCheckInterval()}`);
   console.log("\nPolling for events...\n");
 
   // Polling loop
@@ -218,14 +189,35 @@ async function main() {
           const fromBlock = lastProcessedBlock + 1n;
           const toBlock = currentBlock;
 
-          // Process contract events block by block
-          for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
-            await processBlock(provider, blockNum, contract);
-          }
+          // Load admin command DB once per cycle (picks up file changes between cycles)
+          const commandDb = adminConfig ? beginAdminCycle(adminConfig) : null;
 
-          // Process admin commands from transactions (if configured)
-          if (adminConfig) {
-            await processAdminCommands(provider, adminConfig, fromBlock, toBlock);
+          // Fetch each block once; dispatch events + admin commands against the same fetch
+          for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
+            const block = await provider.getBlock(blockNum, true);
+            if (!block) continue;
+
+            for (const tx of block.transactions) {
+              const decoded = contract.decodeEvents(tx.events);
+              if (decoded.length === 0) continue;
+
+              const txHash = tx.hash;
+              for (const event of decoded) {
+                try {
+                  await dispatchEvent(event, txHash, blockNum, contract);
+                } catch (err) {
+                  console.error(`Error handling event from tx ${txHash}: ${err}`);
+                }
+              }
+            }
+
+            if (adminConfig && commandDb) {
+              try {
+                await processAdminCommandsInBlock(block, adminConfig, commandDb);
+              } catch (err) {
+                console.error(`[ADMIN] Error processing block ${blockNum}: ${err}`);
+              }
+            }
           }
 
           lastProcessedBlock = currentBlock;
@@ -242,9 +234,9 @@ async function main() {
 
         // Run fund withdrawal & distribution cycle periodically
         // Skip if provisioning is in progress to avoid contention
-        if (shouldRunFundCycle() && !isProvisioningInProgress()) {
+        if (shouldRunFundCycle(currentBlock) && !isProvisioningInProgress()) {
           try {
-            await runFundCycle(provider, network);
+            await runFundCycle(provider, network, currentBlock);
           } catch (err) {
             console.error(`[FUND] Error: ${err}`);
           }
@@ -252,9 +244,9 @@ async function main() {
 
         // Check gas balance and swap if needed
         // Skip if provisioning is in progress to avoid contention
-        if (shouldRunGasCheck() && !isProvisioningInProgress()) {
+        if (shouldRunGasCheck(currentBlock) && !isProvisioningInProgress()) {
           try {
-            await runGasCheck(provider, network);
+            await runGasCheck(provider, network, currentBlock);
           } catch (err) {
             console.error(`[GAS] Error: ${err}`);
           }

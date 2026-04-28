@@ -12,11 +12,10 @@
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { networks, type Network } from '@btc-vision/bitcoin';
+import { isValidInternalAddress } from './addressbook.js';
 
 const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
 const WEB3_DEFAULTS_PATH = `${CONFIG_DIR}/web3-defaults.yaml`;
-
-const ADDRESS_RE = /^0x[0-9a-fA-F]{64}$/;
 
 /** MotoSwap AMM (OP20-to-OP20 swaps). */
 export interface MotoSwapConfig {
@@ -37,6 +36,7 @@ export interface Web3Config {
 
 interface RawBlockchain {
     readonly rpc_url?: string;
+    readonly network?: string;
     readonly nft_contract?: string;
     readonly subscription_contract?: string;
     readonly payment_token?: string;
@@ -54,7 +54,7 @@ interface RawYaml {
 }
 
 function isAddress(value: unknown): value is string {
-    return typeof value === 'string' && ADDRESS_RE.test(value);
+    return typeof value === 'string' && isValidInternalAddress(value);
 }
 
 function requireAddress(value: unknown, label: string): string {
@@ -66,7 +66,48 @@ function requireAddress(value: unknown, label: string): string {
     return value;
 }
 
-function inferNetwork(rpcUrl: string): Network {
+/**
+ * OPNet network names. Maps directly to `@btc-vision/bitcoin` Network instances:
+ *   testnet → networks.opnetTestnet (https://testnet.opnet.org, opt1 prefix)
+ *   mainnet → networks.bitcoin    (https://mainnet.opnet.org, op1 prefix)
+ *
+ * Note: networks.opnetTestnet is the Signet fork — NOT Bitcoin Testnet4.
+ */
+type NetworkName = 'testnet' | 'mainnet';
+
+const NETWORK_BY_NAME: Record<NetworkName, Network> = {
+    testnet: networks.opnetTestnet,
+    mainnet: networks.bitcoin,
+};
+
+function isNetworkName(s: unknown): s is NetworkName {
+    return s === 'testnet' || s === 'mainnet';
+}
+
+/**
+ * Resolve the network from web3-defaults.yaml.
+ *
+ * Prefers explicit `blockchain.network` (testnet|mainnet). Falls back to
+ * substring-matching `blockchain.rpc_url` for legacy installs that don't
+ * have the field — a URL like `https://mainnet-mirror.example.com/testnet`
+ * will misroute under the fallback, so emit a loud warning until the operator
+ * sets the explicit field.
+ */
+function resolveNetwork(rpcUrl: string, explicit: string | undefined): Network {
+    if (isNetworkName(explicit)) {
+        return NETWORK_BY_NAME[explicit];
+    }
+    if (explicit !== undefined) {
+        console.warn(
+            `[web3-config] blockchain.network='${explicit}' is invalid (expected testnet|mainnet). ` +
+            `Falling back to RPC URL substring match.`,
+        );
+    } else {
+        console.warn(
+            `[web3-config] blockchain.network not set in web3-defaults.yaml. ` +
+            `Falling back to RPC URL substring match — add 'network: <testnet|mainnet>' under blockchain to silence and harden.`,
+        );
+    }
     if (rpcUrl.includes('mainnet')) return networks.bitcoin;
     return networks.opnetTestnet;
 }
@@ -126,7 +167,7 @@ export function loadWeb3Config(): Web3Config {
 
     return {
         rpcUrl,
-        network: inferNetwork(rpcUrl),
+        network: resolveNetwork(rpcUrl, bc.network),
         nftContract,
         subscriptionContract,
         paymentToken,
@@ -154,5 +195,5 @@ export function loadRpcConfig(): { readonly rpcUrl: string; readonly network: Ne
         );
     }
 
-    return { rpcUrl, network: inferNetwork(rpcUrl) };
+    return { rpcUrl, network: resolveNetwork(rpcUrl, raw.blockchain?.network) };
 }

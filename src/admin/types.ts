@@ -15,15 +15,6 @@ export interface AdminCommand {
 }
 
 /**
- * Parameters for knock command action
- */
-export interface KnockParams {
-  ports?: number[];          // Ports to open (validated against allowed_ports)
-  duration?: number;         // How long to keep ports open (seconds)
-  source?: string;           // IPv6 address — if set, open ports only for this source
-}
-
-/**
  * Admin configuration from blockhost.yaml
  */
 export interface AdminConfig {
@@ -49,11 +40,17 @@ export interface CommandDatabase {
 }
 
 /**
- * Knock action configuration (from command definition params)
+ * Knock action configuration (from admin-commands.json's params field).
+ *
+ * The wire protocol carries only the command name + nonce; all knock
+ * options come from this config object.
  */
 export interface KnockActionConfig {
   allowed_ports?: number[];         // Ports that can be opened (default: [22])
   default_duration?: number;        // Default duration if not specified (default: 300)
+  ports?: number[];                 // Specific ports to open (defaults to allowed_ports)
+  duration?: number;                // Specific duration (defaults to default_duration)
+  source?: string;                  // Optional IPv6 source filter
 }
 
 /**

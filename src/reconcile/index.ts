@@ -17,7 +17,10 @@ import {
 } from "../fund-manager/contract-abis";
 
 const VMS_JSON_PATH = "/var/lib/blockhost/vms.json";
-const RECONCILE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const STATE_DIR = "/var/lib/blockhost";
+const STATE_FILE = `${STATE_DIR}/reconcile-state.json`;
+const PROVISIONING_LOCK = "/run/blockhost/provisioning.lock";
+const RECONCILE_INTERVAL_MS = 60 * 60 * 1000; // 1 hour — engine-defined per facts §3
 const RPC_THROTTLE_MS = 15_000; // 15s between ownerOf queries
 
 interface VmEntry {
@@ -34,30 +37,48 @@ interface VmsDatabase {
   allocated_ips: string[];
 }
 
-let lastReconcileTime = 0;
+interface ReconcileState {
+  last_reconcile: number; // Unix ms of last completed (non-deferred) cycle
+}
+
+function loadReconcileState(): ReconcileState {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) as Record<string, unknown>;
+      const last = typeof raw.last_reconcile === "number" ? raw.last_reconcile : 0;
+      return { last_reconcile: last };
+    }
+  } catch (err) {
+    console.error(`[RECONCILE] Error loading state: ${err}`);
+  }
+  return { last_reconcile: 0 };
+}
+
+function saveReconcileState(state: ReconcileState): void {
+  try {
+    if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });
+    const tmp = STATE_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, STATE_FILE);
+  } catch (err) {
+    console.error(`[RECONCILE] Error saving state: ${err}`);
+  }
+}
+
+let lastReconcileTime = loadReconcileState().last_reconcile;
 let reconcileInProgress = false;
 
 /**
- * Check if the provisioner's create command is currently running
+ * Whether a VM-provisioning operation is currently in flight.
+ *
+ * The provisioner (proxmox/libvirt) writes /run/blockhost/provisioning.lock at
+ * the start of its `create` flow and removes it on exit (success or failure).
+ * Presence of the file is the sole signal — pgrep was removed because matching
+ * the create-command name in argv produced false positives (log tails, etc.)
+ * that delayed reconciliation for spurious reasons.
  */
 export function isProvisioningInProgress(): boolean {
-  try {
-    const result = spawnSync("pgrep", ["-f", getCommand("create")], {
-      encoding: "utf8",
-    });
-    if (result.stdout && result.stdout.trim()) {
-      return true;
-    }
-
-    // Also check for lock file if one exists
-    if (fs.existsSync("/var/run/blockhost-provisioning.lock")) {
-      return true;
-    }
-
-    return false;
-  } catch {
-    return false;
-  }
+  return fs.existsSync(PROVISIONING_LOCK);
 }
 
 /**
@@ -196,15 +217,19 @@ async function reconcileOwnership(
 }
 
 /**
- * Run the ownership reconciliation check
+ * Run the ownership reconciliation check.
+ *
+ * Two early-return paths are *deferrals* (concurrency guard, provisioning in
+ * flight) — they leave `lastReconcileTime` untouched so the next polling tick
+ * retries promptly. Any other outcome (success, missing config, exception)
+ * bumps the timestamp and persists it, so the cycle isn't burned by a missed
+ * deferral and the interval survives a monitor restart.
  */
 export async function runReconciliation(provider: JSONRpcProvider, network: Network): Promise<void> {
-  // Concurrency guard
   if (reconcileInProgress) {
     return;
   }
 
-  // Check if provisioning is in progress
   if (isProvisioningInProgress()) {
     console.log(`[RECONCILE] Skipping - provisioning in progress`);
     return;
@@ -213,20 +238,17 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
   reconcileInProgress = true;
 
   try {
-    // Load NFT contract address
     const nftAddress = loadNftContractAddress();
     if (!nftAddress) {
       // NFT contract not configured yet, skip silently
       return;
     }
 
-    // Load local database
     const localDb = loadVmsDatabase();
     if (!localDb) {
       return;
     }
 
-    // Create contract instance
     const nftContract = getContract<IAccessCredentialNFT>(
       nftAddress,
       ACCESS_CREDENTIAL_NFT_ABI,
@@ -234,26 +256,22 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
       network,
     );
 
-    // Reconcile NFT ownership transfers and retry failed GECOS updates
     await reconcileOwnership(nftContract, localDb);
-
   } catch (err) {
     console.error(`[RECONCILE] Error during reconciliation: ${err}`);
   } finally {
+    lastReconcileTime = Date.now();
+    saveReconcileState({ last_reconcile: lastReconcileTime });
     reconcileInProgress = false;
   }
 }
 
 /**
- * Check if reconciliation should run (based on interval)
+ * Pure check — does NOT mutate state. The mutation lives in runReconciliation's
+ * finally so deferred paths (concurrency, provisioning) don't burn a cycle.
  */
 export function shouldRunReconciliation(): boolean {
-  const now = Date.now();
-  if (now - lastReconcileTime >= RECONCILE_INTERVAL_MS) {
-    lastReconcileTime = now;
-    return true;
-  }
-  return false;
+  return Date.now() - lastReconcileTime >= RECONCILE_INTERVAL_MS;
 }
 
 /**

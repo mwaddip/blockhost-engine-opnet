@@ -144,7 +144,7 @@ Native crypto (used by bhcrypt CLI):
 
 ## Reconciler (`src/reconcile/`)
 
-Runs every 5 minutes as part of the monitor polling loop. Performs two categories of checks:
+Runs hourly as part of the monitor polling loop (interval is engine-defined per facts §3 — Bitcoin's ~10-minute block time makes hourly a reasonable cadence: ~6 blocks per check). Last-run timestamp is persisted to `/var/lib/blockhost/reconcile-state.json` so a monitor restart preserves the cadence. Performs two categories of checks:
 
 ### NFT Minting Reconciliation
 
@@ -329,4 +329,4 @@ Length-prefixed JSON: 4-byte big-endian length + JSON payload (both directions).
 - Reading keyfiles and addressbook.json — works via group permission (`blockhost` group, mode 0640)
 - ECIES decryption (native `src/crypto.ts`) — `blockhost` user can read `server.key` via group permission
 - VM provisioning scripts — provisioner runs as `blockhost`
-- Process checks (`pgrep`) — no privilege needed
+- Reading the provisioning lock at `/run/blockhost/provisioning.lock` — provisioner writes it, engine reads it; group-readable

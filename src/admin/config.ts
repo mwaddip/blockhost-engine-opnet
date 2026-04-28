@@ -8,12 +8,12 @@
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 import type { AdminConfig, CommandDatabase } from "./types";
+import { isValidInternalAddress } from "../fund-manager/addressbook.js";
 
 const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
 const BLOCKHOST_CONFIG_FILE = `${CONFIG_DIR}/blockhost.yaml`;
 const ADMIN_COMMANDS_FILE = `${CONFIG_DIR}/admin-commands.json`;
 
-const ADDRESS_RE = /^0x[0-9a-fA-F]{64}$/;
 const HEX32_RE = /^[0-9a-fA-F]{64}$/;
 
 /**
@@ -37,7 +37,7 @@ export function loadAdminConfig(): AdminConfig | null {
     const sharedKey = admin.shared_key as string;
 
     // Validate wallet address format (32-byte OPNet internal address)
-    if (!ADDRESS_RE.test(walletAddress)) {
+    if (!isValidInternalAddress(walletAddress)) {
       console.error(`[ADMIN] Invalid admin wallet address: ${walletAddress}`);
       return null;
     }

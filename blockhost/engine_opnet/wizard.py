@@ -100,9 +100,9 @@ def validate_rpc_url(url: str) -> bool:
 # OPNet internal addresses: 0x + 64 hex (32-byte)
 INTERNAL_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
-# Bitcoin bech32/bech32m addresses: bc1 (mainnet), tb1 (testnet), bcrt1 (regtest)
-# OPNet P2OP addresses: op1 (mainnet), opt1 (testnet), opr1 (regtest)
-BECH32_ADDRESS_RE = re.compile(r"^(bc|tb|bcrt|op|opt|opr)1[a-z0-9]{8,87}$")
+# Bitcoin bech32/bech32m addresses: bc1 (mainnet), tb1 (testnet)
+# OPNet P2OP addresses: op1 (mainnet), opt1 (testnet)
+BECH32_ADDRESS_RE = re.compile(r"^(bc|tb|op|opt)1[a-z0-9]{8,87}$")
 
 # Async deploy jobs (module-level, shared across requests)
 _deploy_jobs: dict = {}
@@ -135,6 +135,18 @@ def wizard_opnet():
         if not rpc_url:
             rpc_url = NETWORK_RPC.get(network, NETWORK_RPC["testnet"])
 
+        try:
+            plan_price_cents = int(request.form.get("plan_price_cents", 50))
+        except (TypeError, ValueError):
+            return jsonify({"error": "plan_price_cents must be an integer"}), 400
+
+        try:
+            revenue_share_percent = float(
+                request.form.get("revenue_share_percent", 1.0)
+            )
+        except (TypeError, ValueError):
+            return jsonify({"error": "revenue_share_percent must be a number"}), 400
+
         session["blockchain"] = {
             "network": network,
             "rpc_url": rpc_url,
@@ -150,11 +162,9 @@ def wizard_opnet():
             "payment_token": request.form.get("payment_token", "").strip()
                 or NETWORK_PAYMENT_TOKEN.get(network, ""),
             "plan_name": request.form.get("plan_name", "Basic VM").strip(),
-            "plan_price_cents": int(request.form.get("plan_price_cents", 50)),
+            "plan_price_cents": plan_price_cents,
             "revenue_share_enabled": request.form.get("revenue_share_enabled") == "on",
-            "revenue_share_percent": float(
-                request.form.get("revenue_share_percent", 1.0)
-            ),
+            "revenue_share_percent": revenue_share_percent,
             "revenue_share_dev": request.form.get("revenue_share_dev") == "on",
             "revenue_share_broker": request.form.get("revenue_share_broker") == "on",
         }
@@ -1020,7 +1030,7 @@ def finalize_contracts(config: dict) -> tuple[bool, Optional[str]]:
         return False, f"Expected 2 contract pubkeys, got {len(pubkeys)}"
 
     except subprocess.TimeoutExpired:
-        return False, "Contract deployment timed out (10 minutes)"
+        return False, "Contract deployment timed out (62 minutes)"
     except Exception as e:
         return False, str(e)
 
@@ -1055,6 +1065,7 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
         blockchain = config.get("blockchain", {})
         provisioner = config.get("provisioner", {})
         rpc_url = blockchain.get("rpc_url", "")
+        network = blockchain.get("network", "testnet")
         nft_contract = blockchain.get("nft_contract", "")
         sub_contract = blockchain.get("subscription_contract", "")
         payment_token = blockchain.get("payment_token", "")
@@ -1071,9 +1082,13 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
         bridge = provisioner.get("bridge") or _discover_bridge()
 
         # --- web3-defaults.yaml ---
+        # `network` is the authoritative chain identifier — readers must NOT
+        # infer from rpc_url substring (a URL like "mainnet-mirror.example.com/testnet"
+        # would misroute funds otherwise).
         web3_config: dict = {
             "blockchain": {
                 "rpc_url": rpc_url,
+                "network": network,
                 "nft_contract": nft_contract,
                 "subscription_contract": sub_contract,
                 "payment_token": payment_token,
@@ -1209,50 +1224,18 @@ def finalize_chain_config(config: dict) -> tuple[bool, Optional[str]]:
 def _bech32_decode_witness(address: str) -> Optional[tuple[str, bytes]]:
     """Decode a bech32m address into (hrp, witness_program).
 
-    Returns None if not a valid witness v1 address with 32-byte program.
+    Requires the `segwit_addr` Python module (BIP-173/350 reference impl).
+    Returns None if the dependency is missing, the address is malformed,
+    or the witness program is not a 32-byte v1 program.
     """
     try:
         import segwit_addr  # type: ignore[import]
+    except ImportError:
+        return None
+    try:
         hrp, witness_version, witness_program = segwit_addr.decode(None, address)
         if witness_version == 1 and len(witness_program) == 32:
             return (hrp or "", bytes(witness_program))
-    except Exception:
-        pass
-    # Fallback: manual bech32m decode
-    try:
-        CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-        addr = address.lower()
-        sep = addr.rfind("1")
-        if sep < 1:
-            return None
-        hrp = addr[:sep]
-        data_chars = addr[sep + 1:]
-        decoded = []
-        for c in data_chars:
-            v = CHARSET.find(c)
-            if v < 0:
-                return None
-            decoded.append(v)
-        # Strip 6-char checksum
-        if len(decoded) < 7:
-            return None
-        decoded = decoded[:-6]
-        # First element is witness version
-        witness_version = decoded[0]
-        if witness_version != 1:
-            return None
-        # Convert from 5-bit groups to 8-bit bytes
-        bits = 0
-        value = 0
-        result: list[int] = []
-        for v in decoded[1:]:
-            value = (value << 5) | v
-            bits += 5
-            if bits >= 8:
-                bits -= 8
-                result.append((value >> bits) & 0xFF)
-        if len(result) == 32:
-            return (hrp, bytes(result))
     except Exception:
         pass
     return None
@@ -1309,11 +1292,11 @@ def _resolve_mldsa_via_rpc(witness_hex: str, rpc_url: str) -> Optional[str]:
 def _bech32_to_opnet_address(address: str, rpc_url: str = "") -> Optional[str]:
     """Convert a bech32m address to 0x-prefixed 32-byte OPNet internal address.
 
-    For standard P2TR (bc1p/tb1p/bcrt1p), the witness program IS the tweaked
-    pubkey — extracted directly.
+    For standard P2TR (bc1p/tb1p), the witness program IS the tweaked pubkey —
+    extracted directly.
 
-    For OPNet P2OP (op1p/opt1p/opr1p), the witness program is the ML-DSA key
-    hash. These must be resolved via RPC to get the actual on-chain identity.
+    For OPNet P2OP (op1p/opt1p), the witness program is the ML-DSA key hash.
+    These must be resolved via RPC to get the actual on-chain identity.
     """
     decoded = _bech32_decode_witness(address)
     if decoded is None:
@@ -1584,23 +1567,32 @@ def finalize_revenue_share(config: dict) -> tuple[bool, Optional[str]]:
                 ab_path.write_text(json.dumps(addressbook, indent=2) + "\n")
                 _set_blockhost_ownership(ab_path, 0o640)
 
-        # Write revenue-share.json
+        # Write revenue-share.json (basis-points form per facts §6)
         rev_enabled = blockchain.get("revenue_share_enabled", False)
         rev_percent = blockchain.get("revenue_share_percent", 1.0)
         recipients: list[dict] = []
+        total_bps = 0
 
         if rev_enabled:
             active_roles = [
                 r for r in ["dev", "broker"]
                 if blockchain.get(f"revenue_share_{r}")
             ]
-            share_each = rev_percent / max(len(active_roles), 1)
-            for role in active_roles:
-                recipients.append({"role": role, "percent": share_each})
+            if active_roles:
+                # Compute integer bps directly. Float division (e.g. 100/3 = 33.33)
+                # rounded per-recipient under-sums by 1 and trips the bps-mismatch
+                # guard in loadRevenueShareConfig. Last recipient absorbs the
+                # remainder, mirroring distribution.ts.
+                total_bps = round(rev_percent * 100)  # 1.0% → 100 bps
+                share_bps = total_bps // len(active_roles)
+                remainder = total_bps - share_bps * len(active_roles)
+                for i, role in enumerate(active_roles):
+                    bps = share_bps + (remainder if i == len(active_roles) - 1 else 0)
+                    recipients.append({"role": role, "bps": bps})
 
         rev_config = {
             "enabled": rev_enabled,
-            "total_percent": rev_percent if rev_enabled else 0.0,
+            "total_bps": total_bps,
             "recipients": recipients,
         }
 

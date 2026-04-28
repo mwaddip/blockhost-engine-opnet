@@ -10,9 +10,8 @@
  *   decrypt            --private-key-file <path> --ciphertext <hex>
  *   generate-keypair
  *   derive-pubkey      --private-key <hex>
- *   key-to-address     --key <hex>
- *   keygen             [--network regtest|testnet|mainnet]
- *   validate-mnemonic  [--network regtest|testnet|mainnet]  (reads MNEMONIC env var)
+ *   keygen             [--network testnet|mainnet]
+ *   validate-mnemonic  [--network testnet|mainnet]  (reads MNEMONIC env var)
  */
 
 import { eciesDecrypt, symmetricEncrypt, symmetricDecrypt } from './crypto.js';
@@ -113,22 +112,8 @@ async function main(): Promise<void> {
             break;
         }
 
-        case 'key-to-address': {
-            requireFlags(flags, 'key');
-            // OPNet: address derivation requires ML-DSA, not just secp256k1.
-            // For secp256k1-only callers, return the compressed pubkey as a 0x-prefixed identifier.
-            // Full OPNet address derivation needs the mnemonic path (Mnemonic → deriveOPWallet).
-            const keyHex = flags['key']!.replace(/^0x/, '');
-            const pubBytes = secp256k1.getPublicKey(
-                Uint8Array.from(Buffer.from(keyHex, 'hex')),
-                true,
-            );
-            process.stdout.write(`0x${bytesToHex(pubBytes)}\n`);
-            break;
-        }
-
         case 'keygen': {
-            const net = resolveNetwork(flags.network || 'regtest');
+            const net = resolveNetwork(flags.network || 'testnet');
             const mnemonic = generateMnemonic();
             const wallet = new Mnemonic(mnemonic, '', net, MLDSASecurityLevel.LEVEL2)
                 .deriveOPWallet(AddressTypes.P2TR, 0);
@@ -144,7 +129,7 @@ async function main(): Promise<void> {
             const mnemonic = process.env.MNEMONIC;
             if (!mnemonic) die('MNEMONIC environment variable not set');
             if (!validateMnemonic(mnemonic)) die('invalid mnemonic phrase');
-            const net = resolveNetwork(flags.network || 'regtest');
+            const net = resolveNetwork(flags.network || 'testnet');
             const wallet = new Mnemonic(mnemonic, '', net, MLDSASecurityLevel.LEVEL2)
                 .deriveOPWallet(AddressTypes.P2TR, 0);
             process.stdout.write(JSON.stringify({
@@ -159,8 +144,8 @@ async function main(): Promise<void> {
                 `unknown command: ${command || '(none)'}\n` +
                 'Usage: bhcrypt <command> [--flags]\n' +
                 'Commands: encrypt-symmetric, decrypt-symmetric, decrypt,\n' +
-                '          generate-keypair, derive-pubkey, key-to-address,\n' +
-                '          keygen, validate-mnemonic',
+                '          generate-keypair, derive-pubkey, keygen,\n' +
+                '          validate-mnemonic',
             );
     }
 }

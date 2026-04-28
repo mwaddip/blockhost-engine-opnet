@@ -12,7 +12,10 @@ import type { Network } from '@btc-vision/bitcoin';
 import type { Addressbook } from '../../fund-manager/types.js';
 import { resolveWallet } from '../../fund-manager/addressbook.js';
 import { isValidInternalAddress } from '../../fund-manager/addressbook.js';
+import { formatUnits } from '../../fund-manager/token-utils.js';
 import { formatBtc } from '../cli-utils.js';
+import { executeSend } from './send.js';
+import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
 
 /**
  * Sweep BTC from all signing-capable addressbook wallets to a target address.
@@ -21,6 +24,7 @@ export async function cleanupCommand(
     args: string[],
     book: Addressbook,
     provider: JSONRpcProvider,
+    contract: IBlockhostSubscriptions,
     network: Network,
 ): Promise<void> {
     if (args.length < 1) {
@@ -89,11 +93,17 @@ export async function cleanupCommand(
 
             const sendAmount = balance - feeReserve;
 
-            // BTC sending would require TransactionFactory
-            // For cleanup, we just report what would be swept
-            console.log(
-                `  ${role}: would sweep ${formatBtc(sendAmount)} (manual UTXO sweep needed)`,
+            await executeSend(
+                formatUnits(sendAmount, 8),
+                'btc',
+                role,
+                target,
+                book,
+                provider,
+                contract,
+                network,
             );
+            console.log(`  ${role}: swept ${formatBtc(sendAmount)}`);
             totalSwept += sendAmount;
             swept++;
         } catch (err) {
@@ -103,9 +113,6 @@ export async function cleanupCommand(
 
     console.log('');
     console.log(
-        `Done. Would sweep ${formatBtc(totalSwept)} from ${swept} wallet(s), skipped ${skipped}.`,
-    );
-    console.log(
-        'Note: Automated BTC sweep requires TransactionFactory integration.',
+        `Done. Swept ${formatBtc(totalSwept)} from ${swept} wallet(s), skipped ${skipped}.`,
     );
 }

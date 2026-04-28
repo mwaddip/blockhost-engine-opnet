@@ -3,6 +3,7 @@
  */
 
 import * as net from "net";
+import { isValidInternalAddress } from "../fund-manager/addressbook.js";
 
 const SOCKET_PATH = "/run/blockhost/root-agent.sock";
 const DEFAULT_TIMEOUT = 300_000; // 300s in ms
@@ -87,7 +88,7 @@ export async function iptablesClose(port: number, proto = "tcp", comment = "bloc
 export async function generateWallet(name: string): Promise<{ address: string }> {
   const result = await callRootAgent("generate-wallet", { name });
   const address = result.address;
-  if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(address)) {
+  if (typeof address !== 'string' || !isValidInternalAddress(address)) {
     throw new RootAgentError(
       `generate-wallet returned invalid address: ${String(address)}`,
     );

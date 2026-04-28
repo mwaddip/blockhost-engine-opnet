@@ -11,7 +11,7 @@
 import { spawn } from "child_process";
 import * as fs from "fs";
 import * as net from "net";
-import type { CommandResult, KnockParams, KnockActionConfig, ActiveKnock } from "../types";
+import type { CommandResult, KnockActionConfig, ActiveKnock } from "../types";
 import { iptablesOpen, iptablesClose } from "../../root-agent/client";
 
 // Track active knocks in memory
@@ -305,16 +305,14 @@ async function closeKnock(txHash: string, reason: string): Promise<void> {
  * Execute the knock command
  */
 export async function executeKnock(
-  params: KnockParams,
   config: KnockActionConfig,
   txHash: string
 ): Promise<CommandResult> {
-  // Merge params with defaults from config
   const allowedPorts = config.allowed_ports || [22];
   const defaultDuration = config.default_duration || 300;
 
   // Validate and sanitize ports
-  const requestedPorts = params.ports || allowedPorts;
+  const requestedPorts = config.ports || allowedPorts;
   const ports = requestedPorts.filter(port => {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       console.warn(`[KNOCK] Invalid port number: ${port}`);
@@ -335,10 +333,10 @@ export async function executeKnock(
   }
 
   // Validate duration (capped to prevent indefinitely open ports)
-  const duration = Math.min(Math.max(1, params.duration || defaultDuration), MAX_KNOCK_DURATION_S);
+  const duration = Math.min(Math.max(1, config.duration || defaultDuration), MAX_KNOCK_DURATION_S);
 
   // Validate optional source IPv6 address
-  const source = params.source;
+  const source = config.source;
   if (source && !isValidIPv6(source)) {
     return {
       success: false,

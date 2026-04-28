@@ -84,52 +84,36 @@ export async function balanceCommand(
         process.exit(1);
     }
 
-    const address = await resolveAddress(roleOrAddr, book);
-    if (!address) {
-        process.exit(1);
-    }
+    // Delegate the address-resolve + BTC + (optional) token fetch to executeBalance.
+    // When tokenArg is omitted, executeBalance returns just BTC; we then add the
+    // payment-token query as the CLI's extra default behavior.
+    const result = await executeBalance(roleOrAddr, tokenArg, book, provider, contract, network);
 
-    console.log(`\nBalances for ${roleOrAddr} (${address}):\n`);
+    console.log(`\nBalances for ${roleOrAddr} (${result.address}):\n`);
+    console.log(`  BTC          ${formatBtc(result.btcBalance)}`);
 
-    // Native BTC balance (in sats)
-    const btcBalance = await provider.getBalance(address, true);
-    console.log(`  BTC          ${formatBtc(btcBalance)}`);
-
-    // If a specific token was requested
     if (tokenArg) {
-        const resolved = await resolveToken(tokenArg, contract);
-        if (resolved.isNative) {
-            console.log();
-            return;
+        if (result.tokenBalance !== undefined && result.tokenSymbol && result.tokenDecimals !== undefined) {
+            console.log(
+                `  ${result.tokenSymbol.padEnd(12)} ${formatTokenBalance(result.tokenBalance, result.tokenDecimals, result.tokenSymbol)}`,
+            );
         }
-
-        const { balance, decimals, symbol } = await getTokenBalance(
-            resolved.address,
-            address,
-            provider,
-            network,
-        );
-        console.log(
-            `  ${symbol.padEnd(12)} ${formatTokenBalance(balance, decimals, symbol)}`,
-        );
         console.log();
         return;
     }
 
-    // Show payment token balance if configured
+    // No tokenArg: show the contract's primary payment token balance, if configured
     try {
         const paymentResult = await contract.getPaymentToken();
         if (!('error' in paymentResult)) {
-            const tokenAddr =
-                paymentResult.properties.token.toString();
+            const tokenAddr = paymentResult.properties.token.toString();
             if (tokenAddr !== ZERO_ADDRESS) {
-                const { balance, decimals, symbol } =
-                    await getTokenBalance(
-                        tokenAddr,
-                        address,
-                        provider,
-                        network,
-                    );
+                const { balance, decimals, symbol } = await getTokenBalance(
+                    tokenAddr,
+                    result.address,
+                    provider,
+                    network,
+                );
                 console.log(
                     `  ${symbol.padEnd(12)} ${formatTokenBalance(balance, decimals, symbol)}`,
                 );

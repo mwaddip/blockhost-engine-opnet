@@ -47,11 +47,19 @@ export function loadFundManagerConfig(): FundManagerConfig {
       return BigInt(Math.trunc(Number(v)));
     };
 
+    const safeOptionalNumber = (v: unknown): number | undefined => {
+      if (v === undefined || v === null) return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined;
+    };
+
     return {
       fund_cycle_interval_hours:
         (fm.fund_cycle_interval_hours as number) || DEFAULTS.fund_cycle_interval_hours,
       gas_check_interval_minutes:
         (fm.gas_check_interval_minutes as number) || DEFAULTS.gas_check_interval_minutes,
+      fund_cycle_interval_blocks: safeOptionalNumber(fm.fund_cycle_interval_blocks),
+      gas_check_interval_blocks: safeOptionalNumber(fm.gas_check_interval_blocks),
       min_withdrawal_sats: safeBigInt(fm.min_withdrawal_sats, DEFAULTS.min_withdrawal_sats),
       gas_low_threshold_sats: safeBigInt(fm.gas_low_threshold_sats, DEFAULTS.gas_low_threshold_sats),
       gas_swap_amount_sats: safeBigInt(fm.gas_swap_amount_sats, DEFAULTS.gas_swap_amount_sats),

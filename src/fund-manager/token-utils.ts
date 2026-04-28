@@ -13,7 +13,6 @@ import {
 import { Address } from '@btc-vision/transaction';
 import type { Network } from '@btc-vision/bitcoin';
 import type { Wallet } from '@btc-vision/transaction';
-import type { TokenBalance } from './types.js';
 
 /** Maximum satoshis a single contract interaction may spend on fees. */
 export const MAX_SAT_TO_SPEND = 100_000n;
@@ -53,6 +52,21 @@ export async function waitForConfirmation(
 /** OPNet zero address (32 bytes, 0x-prefixed). */
 export const ZERO_ADDRESS =
     '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+/**
+ * Payment token info, fetched once per fund/gas cycle and reused.
+ *
+ * Replaces repeated `executeBalance(role, "stable", ...)` calls that each
+ * re-fetched `contract.getPaymentToken()` + `token.metadata()`. Step functions
+ * receive this and use it together with `getTokenBalanceOnly` for per-wallet
+ * balance queries.
+ */
+export interface PaymentTokenContext {
+    /** 0x-prefixed 32-byte payment token contract address. */
+    readonly address: string;
+    readonly decimals: number;
+    readonly symbol: string;
+}
 
 /** Minimal structural type for a simulation result that can be sent. */
 interface Sendable {
@@ -128,33 +142,53 @@ export async function getTokenBalance(
 }
 
 /**
- * Get the payment token balance for a wallet.
- *
- * @param paymentTokenAddress - 0x-prefixed 32-byte OP20 contract address
- * @param walletAddress - 0x-prefixed 32-byte owner address
- * @param provider - OPNet JSON-RPC provider
- * @param network - Bitcoin network
- * @returns TokenBalance with all fields populated
+ * Fetch only the OP20 token metadata (decimals + symbol) — one RPC call.
+ * Use this when the caller already knows the wallet doesn't matter (e.g.
+ * loading a `PaymentTokenContext` once per cycle).
  */
-export async function getPaymentTokenBalance(
-    paymentTokenAddress: string,
-    walletAddress: string,
+export async function getTokenMetadata(
+    tokenAddress: string,
     provider: JSONRpcProvider,
     network: Network,
-): Promise<TokenBalance> {
-    const { balance, decimals, symbol } = await getTokenBalance(
-        paymentTokenAddress,
-        walletAddress,
+): Promise<{ decimals: number; symbol: string }> {
+    const token = getContract<IOP20Contract>(
+        tokenAddress,
+        OP_20_ABI,
         provider,
         network,
     );
-
+    const result = await token.metadata();
+    if ('error' in result) {
+        throw new Error(`metadata failed: ${result.error}`);
+    }
     return {
-        tokenAddress: paymentTokenAddress,
-        symbol,
-        balance,
-        decimals,
+        decimals: result.properties.decimals,
+        symbol: result.properties.symbol,
     };
+}
+
+/**
+ * Fetch only the OP20 balance (no metadata) — one RPC call.
+ * Use this when decimals/symbol are already known via `PaymentTokenContext`.
+ */
+export async function getTokenBalanceOnly(
+    tokenAddress: string,
+    walletAddress: string,
+    provider: JSONRpcProvider,
+    network: Network,
+): Promise<bigint> {
+    const token = getContract<IOP20Contract>(
+        tokenAddress,
+        OP_20_ABI,
+        provider,
+        network,
+    );
+    const ownerAddr = Address.fromString(walletAddress);
+    const result = await token.balanceOf(ownerAddr);
+    if ('error' in result) {
+        throw new Error(`balanceOf failed: ${result.error}`);
+    }
+    return result.properties.balance;
 }
 
 /**
@@ -192,38 +226,6 @@ export async function transferToken(
     }
 
     await sendSigned(sim, wallet, network);
-}
-
-/**
- * Get all token balances for a wallet (payment token from subscription contract).
- *
- * OPNet uses a single payment token, so this returns at most one entry.
- *
- * @param walletAddress - 0x-prefixed 32-byte owner address
- * @param contract - BlockhostSubscriptions contract instance
- * @param provider - OPNet JSON-RPC provider
- * @param network - Bitcoin network
- * @returns Array of token balances (0 or 1 entries)
- */
-export async function getAllTokenBalances(
-    walletAddress: string,
-    contract: { getPaymentToken(): Promise<any> },
-    provider: JSONRpcProvider,
-    network: Network,
-): Promise<TokenBalance[]> {
-    const tokenResult = await contract.getPaymentToken();
-    if ('error' in tokenResult) return [];
-
-    const tokenAddr = tokenResult.properties.token.toString();
-    if (tokenAddr === ZERO_ADDRESS) return [];
-
-    try {
-        const bal = await getPaymentTokenBalance(tokenAddr, walletAddress, provider, network);
-        return [bal];
-    } catch (err) {
-        console.error(`[FUND] Error fetching token balance for ${walletAddress}: ${err}`);
-        return [];
-    }
 }
 
 /**

@@ -18,8 +18,10 @@ import {
     getTokenBalance,
     formatTokenBalance,
     parseUnits,
+    formatUnits,
 } from '../../fund-manager/token-utils.js';
 import { resolveToken, formatBtc } from '../cli-utils.js';
+import { executeSend } from './send.js';
 import type { IBlockhostSubscriptions } from '../../fund-manager/contract-abis.js';
 
 export async function splitCommand(
@@ -116,18 +118,21 @@ export async function splitCommand(
                 : (totalSats * BigInt(ratio)) / 100n;
             remaining -= share;
 
-            // BTC sending would use TransactionFactory — similar to send command
-            // For simplicity in split, we use sequential OP20 transfers for tokens
-            // BTC splitting requires more complex UTXO management
-            console.log(
-                `  ${recipientRole}: ${formatBtc(share)} (BTC split requires manual UTXO management)`,
+            await executeSend(
+                formatUnits(share, 8),
+                'btc',
+                fromRole,
+                recipient,
+                book,
+                provider,
+                contract,
+                network,
             );
+            console.log(`  ${recipientRole}: ${formatBtc(share)}`);
         }
 
-        console.error(
-            'Note: BTC splitting is not yet implemented. Use OP20 tokens or send individually.',
-        );
-        process.exit(1);
+        console.log('Done.');
+        return;
     }
 
     // Split OP20 tokens

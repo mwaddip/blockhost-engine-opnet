@@ -85,13 +85,11 @@ window.deriveKey = function(signatureBytes) {
 var NETWORKS = {
     bitcoin:  { messagePrefix: "\x18Bitcoin Signed Message:\n", bech32: "bc",   bech32Opnet: "op",  bip32: { public: 76067358, private: 76066276 }, pubKeyHash: 0,   scriptHash: 5,   wif: 128 },
     testnet:  { messagePrefix: "\x18Bitcoin Signed Message:\n", bech32: "tb",   bech32Opnet: "opt", bip32: { public: 70617039, private: 70615956 }, pubKeyHash: 111, scriptHash: 196, wif: 239 },
-    regtest:  { messagePrefix: "\x18Bitcoin Signed Message:\n", bech32: "bcrt", bech32Opnet: "opr", bip32: { public: 70617039, private: 70615956 }, pubKeyHash: 111, scriptHash: 196, wif: 239 },
 };
 
 function inferNetwork(rpcUrl) {
     if (rpcUrl.includes('mainnet')) return NETWORKS.bitcoin;
-    if (rpcUrl.includes('testnet')) return NETWORKS.testnet;
-    return NETWORKS.regtest;
+    return NETWORKS.testnet;
 }
 
 // Bech32m decoder — extracts the 32-byte witness program from a bech32m P2TR address

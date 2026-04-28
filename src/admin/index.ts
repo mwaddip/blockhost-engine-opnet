@@ -16,8 +16,8 @@
 
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import type { JSONRpcProvider, OPNetTransactionTypes, TransactionBase } from 'opnet';
-import type { AdminCommand, AdminConfig, CommandResult, CommandDatabase, KnockParams, KnockActionConfig } from "./types";
+import type { OPNetTransactionTypes, TransactionBase } from 'opnet';
+import type { AdminCommand, AdminConfig, CommandResult, CommandDatabase, KnockActionConfig } from "./types";
 import { loadCommandDatabase } from "./config";
 import { isNonceUsed, markNonceUsed, pruneOldNonces, loadNonces } from "./nonces";
 import { executeKnock, closeAllKnocks } from "./handlers/knock";
@@ -37,9 +37,8 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 // ── Action Handlers ──────────────────────────────────────────────────
 
-const ACTION_HANDLERS: Record<string, (params: Record<string, unknown>, config: Record<string, unknown>, txHash: string) => Promise<CommandResult>> = {
-  knock: async (params, config, txHash) => executeKnock(
-    params as unknown as KnockParams,
+const ACTION_HANDLERS: Record<string, (config: Record<string, unknown>, txHash: string) => Promise<CommandResult>> = {
+  knock: async (config, txHash) => executeKnock(
     config as unknown as KnockActionConfig,
     txHash,
   ),
@@ -154,37 +153,38 @@ export async function dispatchCommand(
   }
 
   console.log(`[ADMIN] Dispatching action '${cmdDef.action}' for command '${cmd.command}'`);
-  return handler(cmdDef.params, cmdDef.params, txHash);
+  return handler(cmdDef.params, txHash);
 }
 
 // ── Block Processing ─────────────────────────────────────────────────
 
 /**
- * Process admin commands from OP_RETURN outputs in a block range.
+ * Begin a polling cycle for admin command processing.
+ * Loads the command database (picking up file changes between cycles) and
+ * prunes expired nonces. Returns null if commands aren't configured —
+ * caller should skip admin processing for the cycle in that case.
+ *
+ * Call once per polling cycle, before iterating blocks.
  */
-export async function processAdminCommands(
-  provider: JSONRpcProvider,
-  adminConfig: AdminConfig,
-  fromBlock: bigint,
-  toBlock: bigint
-): Promise<void> {
+export function beginAdminCycle(adminConfig: AdminConfig): CommandDatabase | null {
   const commandDb = loadCommandDatabase();
-  if (!commandDb) return;
-
+  if (!commandDb) return null;
   pruneOldNonces(adminConfig.max_command_age || 300);
+  return commandDb;
+}
 
-  for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
-    try {
-      const block = await provider.getBlock(blockNum, true);
-      if (!block) continue;
-
-      // Scan transactions for OP_RETURN outputs
-      for (const tx of block.transactions) {
-        await processTransaction(tx, adminConfig, commandDb);
-      }
-    } catch (err) {
-      console.error(`[ADMIN] Error processing block ${blockNum}: ${err}`);
-    }
+/**
+ * Process admin commands from OP_RETURN outputs in a single (already-fetched) block.
+ * The caller owns the block fetch — this lets event decoding and admin scanning
+ * share one getBlock() call per block.
+ */
+export async function processAdminCommandsInBlock(
+  block: { transactions: TransactionBase<OPNetTransactionTypes>[] },
+  adminConfig: AdminConfig,
+  commandDb: CommandDatabase,
+): Promise<void> {
+  for (const tx of block.transactions) {
+    await processTransaction(tx, adminConfig, commandDb);
   }
 }
 

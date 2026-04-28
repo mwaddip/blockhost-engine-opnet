@@ -5,7 +5,8 @@
 # All addresses are 0x-prefixed 32-byte hex (OPNet internal format).
 
 blockchain:
-  rpc_url: "https://regtest.opnet.org"
+  rpc_url: "https://testnet.opnet.org"
+  network: testnet
   nft_contract: "0xf66a84fa60a793421b695299cf3199f282df0035b5779d1924fb5cbd670a21b2"
   subscription_contract: "0x8bf7fad7143e07309ee9c2324c4c68ec8b19bbca1e097884e6b84a312febcacc"
   payment_token: "0x556cf2a9f6a3335d616d61ba9cf046e63ab855cdfce514105d60c3aed103eb9a"

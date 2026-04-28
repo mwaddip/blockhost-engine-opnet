@@ -34,6 +34,7 @@ import {
     type IAccessCredentialNFT,
 } from '../src/fund-manager/contract-abis.js';
 import { waitForConfirmation } from '../src/fund-manager/token-utils.js';
+import { isValidInternalAddress } from '../src/fund-manager/addressbook.js';
 
 const CONFIG_DIR = process.env['BLOCKHOST_CONFIG_DIR'] ?? '/etc/blockhost';
 const MNEMONIC_PATH = `${CONFIG_DIR}/deployer.key`;
@@ -68,7 +69,7 @@ function parseArgs(): Args {
     }
 
     // ownerWallet is optional — if not provided, defaults to deployer's own address
-    if (ownerWallet && !/^0x[0-9a-fA-F]{64}$/.test(ownerWallet)) {
+    if (ownerWallet && !isValidInternalAddress(ownerWallet)) {
         console.error('--owner-wallet must be 0x + 64 hex characters (32-byte OPNet address)');
         process.exit(1);
     }
@@ -91,14 +92,16 @@ function loadMnemonic(): string {
 interface Web3Yaml {
     blockchain?: {
         rpc_url?: string;
+        network?: string;
         nft_contract?: string;
     };
 }
 
-function loadConfig(): { rpcUrl: string; nftContract: string } {
+function loadConfig(): { rpcUrl: string; networkName: string | undefined; nftContract: string } {
     const yamlText = readFileSync(`${CONFIG_DIR}/web3-defaults.yaml`, 'utf8');
     const raw = yaml.load(yamlText) as Web3Yaml;
     const rpcUrl = raw.blockchain?.rpc_url;
+    const networkName = raw.blockchain?.network;
     const nftContract = raw.blockchain?.nft_contract;
     if (!rpcUrl) {
         console.error('blockchain.rpc_url not set in web3-defaults.yaml');
@@ -108,10 +111,23 @@ function loadConfig(): { rpcUrl: string; nftContract: string } {
         console.error('blockchain.nft_contract not set in web3-defaults.yaml');
         process.exit(1);
     }
-    return { rpcUrl, nftContract };
+    return { rpcUrl, networkName, nftContract };
 }
 
-function inferNetwork(rpcUrl: string) {
+function resolveNetwork(rpcUrl: string, networkName: string | undefined) {
+    if (networkName === 'mainnet') return networks.bitcoin;
+    if (networkName === 'testnet') return networks.opnetTestnet;
+    if (networkName !== undefined) {
+        console.error(
+            `[mint_nft] blockchain.network='${networkName}' is invalid (expected testnet|mainnet). ` +
+            `Falling back to RPC URL substring match.`,
+        );
+    } else {
+        console.error(
+            `[mint_nft] blockchain.network not set in web3-defaults.yaml. ` +
+            `Falling back to RPC URL substring match — add 'network: <testnet|mainnet>' to harden.`,
+        );
+    }
     if (rpcUrl.includes('mainnet')) return networks.bitcoin;
     return networks.opnetTestnet;
 }
@@ -120,8 +136,8 @@ function inferNetwork(rpcUrl: string) {
 async function main(): Promise<void> {
     const { ownerWallet, userEncrypted, dryRun } = parseArgs();
     const mnemonicPhrase = loadMnemonic();
-    const { rpcUrl, nftContract: nftContractAddr } = loadConfig();
-    const network = inferNetwork(rpcUrl);
+    const { rpcUrl, networkName, nftContract: nftContractAddr } = loadConfig();
+    const network = resolveNetwork(rpcUrl, networkName);
 
     const provider = new JSONRpcProvider({ url: rpcUrl, network });
 
@@ -241,9 +257,40 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
-    console.error(`NFT minted! Token ID: ${tokenId}`);
+    // Query the actual on-chain tokenId. The simulated tokenId can be wrong if
+    // another mint raced into the same block (tokenId is assigned at execution
+    // time, not simulation time).
+    const balanceResult = await contract.balanceOf(ownerAddress);
+    if ('error' in balanceResult) {
+        console.error(`balanceOf query failed after mint: ${balanceResult.error}`);
+        await provider.close();
+        process.exit(1);
+    }
+    const balance = balanceResult.properties.balance;
+    if (balance === 0n) {
+        console.error('Owner balance is 0 after confirmed mint — indexer may not have caught up');
+        await provider.close();
+        process.exit(1);
+    }
+
+    const idxResult = await contract.tokenOfOwnerByIndex(ownerAddress, balance - 1n);
+    if ('error' in idxResult) {
+        console.error(`tokenOfOwnerByIndex query failed: ${idxResult.error}`);
+        await provider.close();
+        process.exit(1);
+    }
+    const actualTokenId = idxResult.properties.tokenId;
+
+    if (actualTokenId !== tokenId) {
+        console.error(
+            `WARNING: simulated tokenId was ${tokenId}, actual on-chain tokenId is ${actualTokenId}. ` +
+            `A concurrent mint shifted the index — using actual.`
+        );
+    }
+
+    console.error(`NFT minted! Token ID: ${actualTokenId}`);
     // stdout: just the token ID for machine consumption
-    console.log(tokenId.toString());
+    console.log(actualTokenId.toString());
 
     await provider.close();
 }

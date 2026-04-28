@@ -1,6 +1,10 @@
 # Reconciler
 
-Runs every 5 minutes as part of the monitor polling loop. Ensures local state (`vms.json`) matches on-chain state.
+Runs hourly as part of the monitor polling loop (interval is engine-defined per facts §3). Ensures local state (`vms.json`) matches on-chain state. Last-run timestamp is persisted to `/var/lib/blockhost/reconcile-state.json` so the cadence survives a monitor restart.
+
+The reconciler defers (without burning a cycle) when:
+- Another reconciliation is already in flight (concurrency guard)
+- A VM provisioning operation is active — detected via the presence of `/run/blockhost/provisioning.lock` (written by the provisioner during its `create` flow)
 
 ## NFT Minting Reconciliation
 

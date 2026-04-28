@@ -5,17 +5,18 @@
  * Periodically checks the server wallet's BTC balance and, if low,
  * swaps stablecoin for BTC via NativeSwap (OP20 → BTC).
  *
- * Uses bw executeBalance() for queries and bw executeSwap() for swaps.
+ * BTC balances come from `provider.getBalance` directly; stablecoin balances
+ * use `getTokenBalanceOnly` with a pre-fetched `PaymentTokenContext` (so
+ * decimals/symbol/address aren't re-queried per call).
  */
 
 import type { JSONRpcProvider } from "opnet";
 import type { Network } from "@btc-vision/bitcoin";
 import type { Addressbook, FundManagerConfig } from "./types";
 import type { IBlockhostSubscriptions } from "./contract-abis";
-import { executeBalance } from "../bw/commands/balance";
 import { executeSwap } from "../bw/commands/swap";
 import { formatBtc } from "../bw/cli-utils";
-import { formatUnits } from "./token-utils";
+import { type PaymentTokenContext, formatUnits, getTokenBalanceOnly } from "./token-utils";
 
 /**
  * Check server wallet BTC balance and swap stablecoin for BTC if low.
@@ -28,6 +29,7 @@ import { formatUnits } from "./token-utils";
 export async function checkAndSwapGas(
   book: Addressbook,
   config: FundManagerConfig,
+  tokenCtx: PaymentTokenContext | null,
   provider: JSONRpcProvider,
   contract: IBlockhostSubscriptions,
   network: Network,
@@ -37,33 +39,36 @@ export async function checkAndSwapGas(
     return;
   }
 
-  const serverBal = await executeBalance("server", undefined, book, provider, contract, network);
+  const serverBtcBalance = await provider.getBalance(book.server.address, true);
 
-  if (serverBal.btcBalance >= config.gas_low_threshold_sats) {
+  if (serverBtcBalance >= config.gas_low_threshold_sats) {
     return; // Gas sufficient
   }
 
   console.warn(
-    `[GAS] Server BTC low: ${formatBtc(serverBal.btcBalance)}, threshold: ${formatBtc(config.gas_low_threshold_sats)}`
+    `[GAS] Server BTC low: ${formatBtc(serverBtcBalance)}, threshold: ${formatBtc(config.gas_low_threshold_sats)}`
   );
 
+  if (!tokenCtx) {
+    console.warn("[GAS] No payment token configured — cannot swap for BTC");
+    return;
+  }
+
   // Check if server has stablecoin to swap
-  const stableBal = await executeBalance("server", "stable", book, provider, contract, network);
-  if (stableBal.tokenBalance === undefined || stableBal.tokenBalance === 0n) {
+  const serverStableBalance = await getTokenBalanceOnly(tokenCtx.address, book.server.address, provider, network);
+  if (serverStableBalance === 0n) {
     console.warn("[GAS] No stablecoin available for swap — top up server wallet manually");
     return;
   }
 
-  // Determine swap amount: use configured gas_swap_amount_sats worth,
-  // but cap at available stablecoin balance
-  const swapAmount = stableBal.tokenBalance < config.gas_swap_amount_sats
-    ? stableBal.tokenBalance
+  // Determine swap amount: use configured gas_swap_amount_sats, capped at balance
+  const swapAmount = serverStableBalance < config.gas_swap_amount_sats
+    ? serverStableBalance
     : config.gas_swap_amount_sats;
 
-  const decimals = stableBal.tokenDecimals ?? 8;
-  const amountStr = formatUnits(swapAmount, decimals);
+  const amountStr = formatUnits(swapAmount, tokenCtx.decimals);
 
-  console.log(`[GAS] Swapping ${amountStr} ${stableBal.tokenSymbol ?? 'stable'} → BTC via NativeSwap`);
+  console.log(`[GAS] Swapping ${amountStr} ${tokenCtx.symbol} → BTC via NativeSwap`);
 
   try {
     await executeSwap(amountStr, "stable", "btc", "server", book, provider, contract, network);

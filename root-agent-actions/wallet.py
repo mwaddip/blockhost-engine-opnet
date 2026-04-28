@@ -1,8 +1,8 @@
 """
 Root agent action: OPNet wallet generation.
 
-Replaces the EVM `cast wallet new` handler with BIP39 mnemonic generation
-and OPNet address derivation via the bundled keygen.js helper.
+BIP39 mnemonic generation and OPNet address derivation via the bhcrypt CLI
+(installed at /usr/bin/bhcrypt by the engine package).
 """
 
 import grp
@@ -12,18 +12,35 @@ import re
 
 from _common import CONFIG_DIR, SHORT_NAME_RE, WALLET_DENY_NAMES, log
 
-# keygen.js is bundled alongside this action plugin
-_KEYGEN_JS = '/usr/share/blockhost/keygen.js'
-
 
 def _read_network_from_config():
-    """Read network name from web3-defaults.yaml."""
+    """Read network name from web3-defaults.yaml.
+
+    Prefers the explicit `blockchain.network` field (testnet|mainnet). Falls
+    back to RPC URL substring match for legacy installs that don't have the
+    field — emits a warning since a URL like 'mainnet-mirror.example.com/testnet'
+    would misroute key generation under the fallback.
+    """
     try:
         import yaml
         cfg_path = CONFIG_DIR / 'web3-defaults.yaml'
         if cfg_path.exists():
             data = yaml.safe_load(cfg_path.read_text()) or {}
-            rpc_url = data.get('blockchain', {}).get('rpc_url', '')
+            blockchain = data.get('blockchain', {})
+            explicit = blockchain.get('network')
+            if explicit in ('testnet', 'mainnet'):
+                return explicit
+            rpc_url = blockchain.get('rpc_url', '')
+            if explicit is not None:
+                log.warning(
+                    "blockchain.network=%r is invalid (expected testnet|mainnet); "
+                    "falling back to RPC URL substring match", explicit,
+                )
+            else:
+                log.warning(
+                    "blockchain.network not set in web3-defaults.yaml; "
+                    "falling back to RPC URL substring match — add 'network: <testnet|mainnet>' to harden",
+                )
             if 'mainnet' in rpc_url:
                 return 'mainnet'
     except Exception:
@@ -44,32 +61,29 @@ def handle_generate_wallet(params):
     if keyfile.exists():
         return {'ok': False, 'error': f'Key file already exists: {keyfile}'}
 
-    if not os.path.isfile(_KEYGEN_JS):
-        return {'ok': False, 'error': f'keygen.js not found at {_KEYGEN_JS}'}
-
     # Generate mnemonic + derive OPNet address
     network = _read_network_from_config()
     try:
         result = subprocess.run(
-            ['node', _KEYGEN_JS, network],
+            ['bhcrypt', 'keygen', '--network', network],
             capture_output=True, text=True, timeout=30,
         )
     except Exception as e:
-        return {'ok': False, 'error': f'keygen.js failed: {e}'}
+        return {'ok': False, 'error': f'bhcrypt keygen failed: {e}'}
 
     if result.returncode != 0:
-        return {'ok': False, 'error': f'keygen.js error: {result.stderr.strip()}'}
+        return {'ok': False, 'error': f'bhcrypt keygen error: {result.stderr.strip()}'}
 
     try:
         keygen_out = json.loads(result.stdout.strip())
     except json.JSONDecodeError:
-        return {'ok': False, 'error': f'keygen.js invalid output: {result.stdout[:200]}'}
+        return {'ok': False, 'error': f'bhcrypt keygen invalid output: {result.stdout[:200]}'}
 
     mnemonic_phrase = keygen_out.get('mnemonic', '')
-    address = keygen_out.get('address', '')
+    address = keygen_out.get('internalAddress', '')
 
     if not mnemonic_phrase or not re.match(r'^0x[0-9a-fA-F]{64}$', address):
-        return {'ok': False, 'error': f'keygen.js returned invalid data: {keygen_out}'}
+        return {'ok': False, 'error': f'bhcrypt keygen returned invalid data: {keygen_out}'}
 
     # Write mnemonic to keyfile
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

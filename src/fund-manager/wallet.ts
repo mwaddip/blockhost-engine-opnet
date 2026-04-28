@@ -31,7 +31,7 @@ function readKeyfile(keyfilePath: string): string {
  * Derive an OPNet wallet from a mnemonic keyfile.
  *
  * @param keyfilePath - Absolute path to keyfile containing a BIP39 mnemonic
- * @param network - Bitcoin network (regtest, testnet, mainnet)
+ * @param network - Bitcoin network (testnet, mainnet)
  * @returns Wallet with keypair, mldsaKeypair, p2tr, address
  */
 export function walletFromKeyfile(keyfilePath: string, network: Network): Wallet {

@@ -1,12 +1,25 @@
 import { JSONRpcProvider } from 'opnet';
 import { networks } from '@btc-vision/bitcoin';
 
-const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://regtest.opnet.org';
-const network = RPC_URL.includes('mainnet')
-    ? networks.bitcoin
-    : RPC_URL.includes('testnet')
-      ? networks.testnet
-      : networks.regtest;
+const RPC_URL = process.env.OPNET_RPC_URL ?? 'https://testnet.opnet.org';
+
+function resolveNetwork(rpcUrl: string, name: string | undefined) {
+    if (name === 'mainnet') return networks.bitcoin;
+    if (name === 'testnet') return networks.opnetTestnet;
+    if (name !== undefined) {
+        console.error(
+            `OPNET_NETWORK='${name}' is invalid (expected testnet|mainnet); falling back to RPC URL substring.`,
+        );
+    } else {
+        console.error(
+            `OPNET_NETWORK not set; falling back to RPC URL substring — set OPNET_NETWORK=testnet|mainnet to harden.`,
+        );
+    }
+    if (rpcUrl.includes('mainnet')) return networks.bitcoin;
+    return networks.opnetTestnet;
+}
+
+const network = resolveNetwork(RPC_URL, process.env.OPNET_NETWORK);
 
 const contracts: Record<string, string> = {
     OPNET_NFT_CONTRACT: process.env.OPNET_NFT_CONTRACT ?? '',

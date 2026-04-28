@@ -117,8 +117,8 @@ async function main(): Promise<void> {
             );
             process.exit(1);
         }
-        const { provider, network } = createProviderAndContract();
-        await cleanupCommand(positional, book, provider, network);
+        const { provider, contract, network } = createProviderAndContract();
+        await cleanupCommand(positional, book, provider, contract, network);
         return;
     }
 

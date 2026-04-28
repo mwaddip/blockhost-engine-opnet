@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "child_process";
 import * as fs from "fs";
 import { getCommand } from "../provisioner";
 import { eciesDecrypt, symmetricEncrypt, loadServerPrivateKey } from "../crypto";
+import { isValidInternalAddress } from "../fund-manager/addressbook.js";
 
 // Paths on the server
 const WORKING_DIR = "/var/lib/blockhost";
@@ -23,22 +24,18 @@ function getNetworkMode(): string {
 }
 
 /**
- * Resolve the subscriber-facing host via blockhost.network_hook.
+ * Resolve the subscriber-facing host via the common network-hook CLI.
  * Returns the host string on success, or null on failure.
  */
 function resolveConnectionEndpoint(vmName: string, bridgeIp: string, mode: string): string | null {
-  const script =
-    "import sys\n" +
-    "from blockhost.network_hook import get_connection_endpoint\n" +
-    "print(get_connection_endpoint(sys.argv[1], sys.argv[2], sys.argv[3]))\n";
-  const result = spawnSync("python3", ["-c", script, vmName, bridgeIp, mode], {
+  const result = spawnSync("blockhost-network-hook", ["resolve", vmName, bridgeIp, mode], {
     cwd: WORKING_DIR,
     timeout: 60_000,
     encoding: "utf8",
   });
   if (result.status !== 0) {
     const err = (result.stderr || result.stdout || "").trim();
-    console.error(`[ERROR] network_hook.get_connection_endpoint failed for ${vmName}: ${err || `exit ${result.status}`}`);
+    console.error(`[ERROR] network-hook resolve failed for ${vmName}: ${err || `exit ${result.status}`}`);
     return null;
   }
   const host = result.stdout.trim();
@@ -46,21 +43,17 @@ function resolveConnectionEndpoint(vmName: string, bridgeIp: string, mode: strin
 }
 
 /**
- * Release network resources on VM destroy via blockhost.network_hook.cleanup.
+ * Release network resources on VM destroy via the common network-hook CLI.
  */
 function cleanupNetworkResources(vmName: string, mode: string): void {
-  const script =
-    "import sys\n" +
-    "from blockhost.network_hook import cleanup\n" +
-    "cleanup(sys.argv[1], sys.argv[2])\n";
-  const result = spawnSync("python3", ["-c", script, vmName, mode], {
+  const result = spawnSync("blockhost-network-hook", ["cleanup", vmName, mode], {
     cwd: WORKING_DIR,
     timeout: 30_000,
     encoding: "utf8",
   });
   if (result.status !== 0) {
     const err = (result.stderr || result.stdout || "").trim();
-    console.warn(`[WARN] network_hook.cleanup failed for ${vmName}: ${err || `exit ${result.status}`}`);
+    console.warn(`[WARN] network-hook cleanup failed for ${vmName}: ${err || `exit ${result.status}`}`);
   }
 }
 
@@ -108,17 +101,16 @@ function formatVmName(subscriptionId: bigint): string {
 }
 
 /**
- * Calculate days from expiry block height.
- * expiresAt is a block height (not timestamp). We estimate days
- * from the difference in blocks using BLOCKS_PER_DAY = 144.
- * currentBlock is passed from the monitor; if unavailable, estimate from expiresAt.
+ * Calculate days from expiry block height relative to a reference block.
+ * expiresAt is a block height (not timestamp). Days = (expiresAt - currentBlock) / BLOCKS_PER_DAY.
+ * Caller MUST pass the block height where the originating event was emitted —
+ * that anchors the calculation to "days remaining at the time the user paid."
  */
 const BLOCKS_PER_DAY = 144n;
 
-function calculateExpiryDays(expiresAtBlock: bigint, currentBlock?: bigint): number {
-  const now = currentBlock ?? 0n;
-  if (expiresAtBlock <= now) return 1; // Already expired, at least 1 day for provisioning
-  const blocksRemaining = expiresAtBlock - now;
+function calculateExpiryDays(expiresAtBlock: bigint, currentBlock: bigint): number {
+  if (expiresAtBlock <= currentBlock) return 1; // Already expired, at least 1 day for provisioning
+  const blocksRemaining = expiresAtBlock - currentBlock;
   const days = Number(blocksRemaining / BLOCKS_PER_DAY);
   return Math.max(1, days);
 }
@@ -217,22 +209,19 @@ function encryptConnectionDetails(
 
 /**
  * Mark an NFT as minted in the VM database (synchronous, checked).
+ *
+ * Common's CLI takes (vm_name, token_id) — the underlying API is
+ * `set_nft_minted(vm_name, token_id)`. The previous inline-script call passed
+ * (token_id, owner_wallet), which was wrong both in argument order and types.
  */
-function markNftMinted(nftTokenId: number, ownerWallet: string): void {
-  const script = `
-import os
-from blockhost.vm_db import get_database
-db = get_database()
-db.set_nft_minted(int(os.environ['NFT_TOKEN_ID']), os.environ['OWNER_WALLET'])
-`;
-  const result = spawnSync("python3", ["-c", script], {
+function markNftMinted(vmName: string, nftTokenId: number): void {
+  const result = spawnSync("blockhost-vmdb", ["mark-nft-minted", vmName, String(nftTokenId)], {
     cwd: WORKING_DIR,
     timeout: 10_000,
-    env: { ...process.env, NFT_TOKEN_ID: String(nftTokenId), OWNER_WALLET: ownerWallet },
   });
   if (result.status !== 0) {
     const errMsg = result.stderr ? result.stderr.toString().trim() : "";
-    console.error(`[WARN] Failed to mark NFT ${nftTokenId} as minted in database${errMsg ? ": " + errMsg : ""}`);
+    console.error(`[WARN] Failed to mark NFT ${nftTokenId} for ${vmName} as minted${errMsg ? ": " + errMsg : ""}`);
   }
 }
 
@@ -257,12 +246,12 @@ async function destroyVm(vmName: string): Promise<{ success: boolean; output: st
   };
 }
 
-export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent, txHash: string): Promise<void> {
+export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent, txHash: string, currentBlock: bigint): Promise<void> {
   const vmName = formatVmName(event.subscriptionId);
-  const expiryDays = calculateExpiryDays(event.expiresAt);
+  const expiryDays = calculateExpiryDays(event.expiresAt, currentBlock);
 
   // Validate subscriber address format before using in spawn args
-  if (!/^0x[0-9a-fA-F]{64}$/.test(event.subscriber)) {
+  if (!isValidInternalAddress(event.subscriber)) {
     console.error(`[ERROR] Invalid subscriber address format: ${event.subscriber}`);
     return;
   }
@@ -388,12 +377,12 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
   }
 
   // Step 9: Mark NFT minted in database (synchronous)
-  markNftMinted(actualTokenId, event.subscriber);
+  markNftMinted(vmName, actualTokenId);
 
   console.log("==========================================\n");
 }
 
-export async function handleSubscriptionExtended(event: SubscriptionExtendedEvent, txHash: string): Promise<void> {
+export async function handleSubscriptionExtended(event: SubscriptionExtendedEvent, txHash: string, currentBlock: bigint): Promise<void> {
   const vmName = formatVmName(event.subscriptionId);
   console.log("\n========== SUBSCRIPTION EXTENDED ==========");
   console.log(`Transaction: ${txHash}`);
@@ -405,32 +394,13 @@ export async function handleSubscriptionExtended(event: SubscriptionExtendedEven
   console.log("-------------------------------------------");
   console.log(`Updating expiry for VM: ${vmName}`);
 
-  // Calculate additional days from current time to new expiry
-  const additionalDays = calculateExpiryDays(event.newExpiresAt);
+  // Days remaining anchored to the block where the extend event was emitted
+  const additionalDays = calculateExpiryDays(event.newExpiresAt, currentBlock);
 
-  // Use Python to update the database and check if VM needs to be resumed
-  // Returns "NEEDS_RESUME" if the VM was suspended and should be started
-  const script = `
-import os
-from blockhost.vm_db import get_database
-
-vm_name = os.environ['VM_NAME']
-additional_days = int(os.environ['ADDITIONAL_DAYS'])
-db = get_database()
-vm = db.get_vm(vm_name)
-if vm:
-    old_status = vm.get('status', 'unknown')
-    db.extend_expiry(vm_name, additional_days)
-    print(f"Extended {vm['vm_name']} expiry by {additional_days} days")
-    if old_status == 'suspended':
-        print("NEEDS_RESUME")
-else:
-    print(f"VM {vm_name} not found in database")
-`;
-
-  const proc = spawn("python3", ["-c", script], {
+  // Common's vmdb extend-expiry CLI: stdout line 1 = confirmation, stdout line
+  // 2 = "NEEDS_RESUME" if the VM was suspended at extend time.
+  const proc = spawn("blockhost-vmdb", ["extend-expiry", vmName, String(additionalDays)], {
     cwd: WORKING_DIR,
-    env: { ...process.env, VM_NAME: vmName, ADDITIONAL_DAYS: String(additionalDays) },
   });
 
   let output = "";

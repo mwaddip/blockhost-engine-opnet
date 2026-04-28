@@ -71,6 +71,26 @@ export async function normalizeAddress(address: string): Promise<string | null> 
 }
 
 /**
+ * Lazy-initialized provider for P2OP resolution.
+ *
+ * `resolveViaRpc` was opening a fresh JSONRpcProvider on every call (and
+ * closing it in `finally`), which created a new socket per resolution. Loading
+ * an addressbook with N P2OP entries opened N sockets. The provider is now
+ * created on first use and reused for the lifetime of the process — fine for
+ * both long-running monitor and short-lived CLI processes (Node closes sockets
+ * on exit).
+ */
+let resolverProvider: JSONRpcProvider | null = null;
+
+function getResolverProvider(): JSONRpcProvider {
+    if (!resolverProvider) {
+        const { rpcUrl, network } = loadRpcConfig();
+        resolverProvider = new JSONRpcProvider({ url: rpcUrl, network });
+    }
+    return resolverProvider;
+}
+
+/**
  * Resolve an ML-DSA hash to the tweaked pubkey (on-chain identity) via RPC.
  *
  * If the RPC returns the same value we sent (address not indexed yet),
@@ -78,10 +98,8 @@ export async function normalizeAddress(address: string): Promise<string | null> 
  * cause NFTs and transactions to go to the wrong address.
  */
 async function resolveViaRpc(mldsaHash: string): Promise<string | null> {
-    let provider: JSONRpcProvider | null = null;
     try {
-        const { rpcUrl, network } = loadRpcConfig();
-        provider = new JSONRpcProvider({ url: rpcUrl, network });
+        const provider = getResolverProvider();
         const result = await provider.getPublicKeyInfo(mldsaHash, false);
         const resolved = String(result);
         if (!isValidInternalAddress(resolved)) return null;
@@ -100,8 +118,6 @@ async function resolveViaRpc(mldsaHash: string): Promise<string | null> {
     } catch (err) {
         console.error(`[addressbook] Failed to resolve P2OP address via RPC: ${err}`);
         return null;
-    } finally {
-        if (provider) await provider.close();
     }
 }
 
@@ -137,12 +153,18 @@ export function loadAddressbook(): Addressbook {
 
 /**
  * Save addressbook via root agent.
+ *
+ * Throws on failure — callers MUST handle. Silently swallowing here was a
+ * footgun: hot-wallet generation would log success while the addressbook write
+ * actually failed, leaving an orphaned keyfile and re-tripping `keyfile already
+ * exists` on the next attempt.
  */
 export async function saveAddressbook(book: Addressbook): Promise<void> {
     try {
         await addressbookSave(book);
     } catch (err) {
         console.error(`[FUND] Error saving addressbook: ${err}`);
+        throw err;
     }
 }
 
