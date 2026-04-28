@@ -12,6 +12,11 @@ coverage.json
 dist/
 *.tsbuildinfo
 
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
 # Environment and secrets
 .env
 .env.*
