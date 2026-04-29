@@ -27,3 +27,11 @@ getCommand("update-gecos") <vm-name> <wallet-address> --nft-id <token_id>
 ```
 
 Exit 0 = GECOS updated. Exit 1 = failed (retried next cycle).
+
+## Network Config Reconciliation
+
+For every active VM where `network_config_synced !== true`, the reconciler invokes `blockhost-network-hook push-vm-config <vm>`. On success it sets `network_config_synced = true` via `blockhost-vmdb update-fields` (lockfile-routed). The dispatcher reads `vm-db.network_mode` and forwards to the matching plugin's `push-vm-config` command — the engine stays mode-agnostic.
+
+The flag is initialised at VM-creation time: the SubscriptionCreated handler runs `push-vm-config` once after minting the NFT and writes the result. Failures there are non-fatal — this loop is what eventually pulls the value true (e.g. after the guest agent comes up).
+
+Idempotent. Safe to invoke every cycle.

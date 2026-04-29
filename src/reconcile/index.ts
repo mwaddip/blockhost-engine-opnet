@@ -10,6 +10,7 @@ import type { Network } from "@btc-vision/bitcoin";
 import { spawnSync } from "child_process";
 import * as fs from "fs";
 import { getCommand } from "../provisioner";
+import { setNetworkConfigSynced } from "../handlers";
 import { loadWeb3Config } from "../fund-manager/web3-config";
 import {
   ACCESS_CREDENTIAL_NFT_ABI,
@@ -30,6 +31,7 @@ interface VmEntry {
   nft_minted?: boolean;
   status: string;
   gecos_synced?: boolean;
+  network_config_synced?: boolean;
 }
 
 interface VmsDatabase {
@@ -156,6 +158,47 @@ function updateGecos(vmName: string, walletAddress: string, nftTokenId: number):
 }
 
 /**
+ * Retry blockhost-network-hook push-vm-config for VMs where the prior push
+ * didn't confirm success. Idempotent — safe to call every cycle.
+ */
+function pushVmConfig(vmName: string): boolean {
+  const result = spawnSync("blockhost-network-hook", ["push-vm-config", vmName], {
+    cwd: "/var/lib/blockhost",
+    timeout: 60_000,
+    encoding: "utf8",
+  });
+  if (result.status === 0) return true;
+  const errMsg = (result.stderr || result.stdout || "").trim();
+  console.warn(`[RECONCILE] push-vm-config failed for ${vmName}: ${errMsg || `exit ${result.status}`}`);
+  return false;
+}
+
+/**
+ * Reconcile per-VM network config: retry push-vm-config until each VM's
+ * `network_config_synced` flag flips true.
+ */
+async function reconcileNetworkConfig(localDb: VmsDatabase): Promise<void> {
+  let first = true;
+  for (const [vmName, vm] of Object.entries(localDb.vms)) {
+    if (vm.status === "destroyed") continue;
+    if (vm.network_config_synced === true) continue;
+
+    // Modest throttle — guest-exec calls can take seconds and we don't want
+    // to monopolise the dispatcher when many VMs need a retry.
+    if (!first) {
+      await new Promise<void>((r) => setTimeout(r, 1_000));
+    }
+    first = false;
+
+    if (pushVmConfig(vmName)) {
+      setNetworkConfigSynced(vmName, true);
+      vm.network_config_synced = true;
+      console.log(`[RECONCILE] network config synced for ${vmName}`);
+    }
+  }
+}
+
+/**
  * Reconcile NFT ownership: detect transfers and update VM GECOS fields.
  */
 async function reconcileOwnership(
@@ -257,6 +300,7 @@ export async function runReconciliation(provider: JSONRpcProvider, network: Netw
     );
 
     await reconcileOwnership(nftContract, localDb);
+    await reconcileNetworkConfig(localDb);
   } catch (err) {
     console.error(`[RECONCILE] Error during reconciliation: ${err}`);
   } finally {

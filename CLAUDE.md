@@ -144,7 +144,7 @@ Native crypto (used by bhcrypt CLI):
 
 ## Reconciler (`src/reconcile/`)
 
-Runs hourly as part of the monitor polling loop (interval is engine-defined per facts §3 — Bitcoin's ~10-minute block time makes hourly a reasonable cadence: ~6 blocks per check). Last-run timestamp is persisted to `/var/lib/blockhost/reconcile-state.json` so a monitor restart preserves the cadence. Performs two categories of checks:
+Runs hourly as part of the monitor polling loop (interval is engine-defined per facts §3 — Bitcoin's ~10-minute block time makes hourly a reasonable cadence: ~6 blocks per check). Last-run timestamp is persisted to `/var/lib/blockhost/reconcile-state.json` so a monitor restart preserves the cadence. Performs three categories of checks:
 
 ### NFT Minting Reconciliation
 
@@ -170,6 +170,12 @@ getCommand("update-gecos") <vm-name> <wallet-address> --nft-id <token_id>
 ```
 
 Exit 0 = GECOS updated. Exit 1 = failed (retried next cycle).
+
+### Network Config Reconciliation
+
+For every active VM where `network_config_synced !== true`, the reconciler invokes `blockhost-network-hook push-vm-config <vm>`. On success it flips `network_config_synced = true` via `blockhost-vmdb update-fields` (lockfile-routed). The flag is initialised at VM-creation time inside the `SubscriptionCreated` handler — the reconciler is the retry path when the first push fails (e.g. the guest agent isn't ready yet).
+
+The dispatcher reads `vm-db.network_mode` and forwards to the matching plugin's `push-vm-config`. The engine itself never branches on mode; per `facts/ENGINE_INTERFACE.md` §13 it is strictly mode-agnostic.
 
 ## Fund Manager
 

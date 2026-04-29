@@ -4,7 +4,6 @@
  */
 
 import { spawn, spawnSync } from "child_process";
-import * as fs from "fs";
 import { getCommand } from "../provisioner";
 import { eciesDecrypt, symmetricEncrypt, loadServerPrivateKey } from "../crypto";
 import { isValidInternalAddress } from "../fund-manager/addressbook.js";
@@ -12,30 +11,22 @@ import { isValidInternalAddress } from "../fund-manager/addressbook.js";
 // Paths on the server
 const WORKING_DIR = "/var/lib/blockhost";
 const SSH_PORT = 22;
-const NETWORK_MODE_PATH = "/etc/blockhost/network-mode";
-
-function getNetworkMode(): string {
-  try {
-    const mode = fs.readFileSync(NETWORK_MODE_PATH, "utf8").trim();
-    return mode || "broker";
-  } catch {
-    return "broker";
-  }
-}
 
 /**
- * Resolve the subscriber-facing host via the common network-hook CLI.
- * Returns the host string on success, or null on failure.
+ * Resolve the subscriber-facing host via the network-hook dispatcher.
+ * The dispatcher reads vm-db.network_mode for the VM and forwards to the
+ * matching plugin's `public-address` command. No fallback: a missing or
+ * empty result aborts the caller (no NFT mint with garbage data).
  */
-function resolveConnectionEndpoint(vmName: string, bridgeIp: string, mode: string): string | null {
-  const result = spawnSync("blockhost-network-hook", ["resolve", vmName, bridgeIp, mode], {
+function getPublicAddress(vmName: string): string | null {
+  const result = spawnSync("blockhost-network-hook", ["public-address", vmName], {
     cwd: WORKING_DIR,
     timeout: 60_000,
     encoding: "utf8",
   });
   if (result.status !== 0) {
     const err = (result.stderr || result.stdout || "").trim();
-    console.error(`[ERROR] network-hook resolve failed for ${vmName}: ${err || `exit ${result.status}`}`);
+    console.error(`[ERROR] network-hook public-address failed for ${vmName}: ${err || `exit ${result.status}`}`);
     return null;
   }
   const host = result.stdout.trim();
@@ -43,10 +34,47 @@ function resolveConnectionEndpoint(vmName: string, bridgeIp: string, mode: strin
 }
 
 /**
- * Release network resources on VM destroy via the common network-hook CLI.
+ * Push mode-specific in-VM config via the network-hook dispatcher.
+ * Idempotent. Returns true on success, false on retryable failure.
  */
-function cleanupNetworkResources(vmName: string, mode: string): void {
-  const result = spawnSync("blockhost-network-hook", ["cleanup", vmName, mode], {
+function pushVmConfig(vmName: string): boolean {
+  const result = spawnSync("blockhost-network-hook", ["push-vm-config", vmName], {
+    cwd: WORKING_DIR,
+    timeout: 60_000,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    const err = (result.stderr || result.stdout || "").trim();
+    console.warn(`[WARN] network-hook push-vm-config failed for ${vmName}: ${err || `exit ${result.status}`}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Persist `network_config_synced` on the VM record via common's vmdb CLI.
+ * The CLI routes through the lockfile; direct writes to vms.json would race
+ * with concurrent mutators.
+ */
+export function setNetworkConfigSynced(vmName: string, synced: boolean): void {
+  const fields = JSON.stringify({ network_config_synced: synced });
+  const result = spawnSync("blockhost-vmdb", ["update-fields", vmName, "--fields", fields], {
+    cwd: WORKING_DIR,
+    timeout: 10_000,
+  });
+  if (result.status !== 0) {
+    const errMsg = result.stderr ? result.stderr.toString().trim() : "";
+    console.warn(`[WARN] Failed to set network_config_synced=${synced} for ${vmName}${errMsg ? ": " + errMsg : ""}`);
+  }
+}
+
+/**
+ * Release per-VM network resources via the network-hook dispatcher.
+ * Called BEFORE vm-destroy so plugins can do guest-side reversal while the
+ * VM is still running.
+ */
+function cleanupNetworkResources(vmName: string): void {
+  const result = spawnSync("blockhost-network-hook", ["cleanup", vmName], {
     cwd: WORKING_DIR,
     timeout: 30_000,
     encoding: "utf8",
@@ -311,15 +339,15 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
 
   console.log(`[INFO] VM summary: ip=${summary.ip}, vmid=${summary.vmid}`);
 
-  // Step 4: Resolve subscriber-facing host via network hook (mode-agnostic)
-  const networkMode = getNetworkMode();
-  const host = resolveConnectionEndpoint(vmName, summary.ip, networkMode);
+  // Step 4: Resolve subscriber-facing host via the network-hook dispatcher.
+  // The dispatcher reads vm-db.network_mode itself; engine is mode-agnostic.
+  const host = getPublicAddress(vmName);
   if (!host) {
-    console.error(`[ERROR] Failed to resolve connection endpoint for ${vmName} (mode=${networkMode})`);
+    console.error(`[ERROR] Failed to resolve public address for ${vmName} — aborting handler`);
     console.log("==========================================\n");
     return;
   }
-  console.log(`[INFO] Connection host: ${host} (mode=${networkMode})`);
+  console.log(`[INFO] Connection host: ${host}`);
 
   // Step 5: Encrypt connection details using user's signature
   let userEncrypted = "0x";
@@ -364,7 +392,17 @@ export async function handleSubscriptionCreated(event: SubscriptionCreatedEvent,
 
   console.log(`[OK] NFT minted for ${vmName} (token #${actualTokenId})`);
 
-  // Step 8: Update GECOS with actual token ID
+  // Step 8a: Push mode-specific in-VM config via the dispatcher.
+  // Best-effort here — the reconciler retries until network_config_synced=true.
+  const pushed = pushVmConfig(vmName);
+  setNetworkConfigSynced(vmName, pushed);
+  if (pushed) {
+    console.log(`[OK] network-hook push-vm-config succeeded for ${vmName}`);
+  } else {
+    console.warn(`[WARN] network-hook push-vm-config deferred for ${vmName} — reconciler will retry`);
+  }
+
+  // Step 8b: Update GECOS with actual token ID
   const updateGecosCmd = getCommand("update-gecos");
   const gecosArgs = [vmName, event.subscriber, "--nft-id", String(actualTokenId)];
   const gecosResult = spawnSync(updateGecosCmd, gecosArgs, { timeout: 30_000, cwd: WORKING_DIR });
@@ -460,8 +498,12 @@ export async function handleSubscriptionCancelled(event: SubscriptionCancelledEv
   console.log(`Plan ID: ${event.planId}`);
   console.log(`Subscriber: ${event.subscriber}`);
   console.log("--------------------------------------------");
-  console.log(`Destroying VM: ${vmName}`);
 
+  // Release per-VM network resources BEFORE destroy so plugins can do
+  // guest-side reversal while the VM is still running.
+  cleanupNetworkResources(vmName);
+
+  console.log(`Destroying VM: ${vmName}`);
   const { success, output } = await destroyVm(vmName);
 
   if (success) {
@@ -469,10 +511,6 @@ export async function handleSubscriptionCancelled(event: SubscriptionCancelledEv
   } else {
     console.error(`[ERROR] Failed to destroy VM: ${output}`);
   }
-
-  // Release network-mode-specific resources (e.g. tor hidden service)
-  const networkMode = getNetworkMode();
-  cleanupNetworkResources(vmName, networkMode);
 
   console.log("============================================\n");
 }
